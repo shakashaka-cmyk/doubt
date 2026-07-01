@@ -4,9 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ダウトゲーム with ベッティング</title>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/react.production.min.js"></script>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
   <style>
     * {
       margin: 0;
@@ -42,50 +39,47 @@
 <body>
   <div id="root"></div>
 
-  <script type="text/babel">
+  <script>
     const INITIAL_BANKROLL = 100;
     const MAX_BET = 100;
 
-    function DoubtGame() {
-      const [gameState, setGameState] = React.useState('setup');
-      const [playerCount, setPlayerCount] = React.useState(2);
-      const [players, setPlayers] = React.useState([]);
-      const [currentPlayerIdx, setCurrentPlayerIdx] = React.useState(0);
-      const [round, setRound] = React.useState(1);
-      const [bets, setBets] = React.useState({});
-      const [currentBet, setCurrentBet] = React.useState(0);
-      const [claim, setClaim] = React.useState('');
-      const [doubts, setDoubts] = React.useState({});
-      const [revealed, setRevealed] = React.useState(false);
-      const [isCorrect, setIsCorrect] = React.useState(null);
-      const [message, setMessage] = React.useState('');
-      const [odds, setOdds] = React.useState({});
+    class GameState {
+      constructor() {
+        this.gameState = 'setup';
+        this.playerCount = 2;
+        this.players = [];
+        this.currentPlayerIdx = 0;
+        this.round = 1;
+        this.bets = {};
+        this.currentBet = 0;
+        this.claim = '';
+        this.revealed = false;
+        this.isCorrect = null;
+        this.message = '';
+        this.odds = {};
+      }
 
-      // ゲーム初期化
-      const startGame = () => {
-        const newPlayers = Array.from({ length: playerCount }, (_, i) => ({
+      startGame() {
+        this.players = Array.from({ length: this.playerCount }, (_, i) => ({
           id: i,
           name: `プレイヤー ${i + 1}`,
           bankroll: INITIAL_BANKROLL,
           status: 'active'
         }));
-        setPlayers(newPlayers);
-        setBets({});
-        setDoubts({});
-        setGameState('betting');
-        setClaim('');
-        setCurrentBet(0);
-      };
+        this.bets = {};
+        this.gameState = 'betting';
+        this.claim = '';
+        this.currentBet = 0;
+        this.round = 1;
+        this.currentPlayerIdx = 0;
+      }
 
-      // ベッティング額に基づくオッズ計算（競馬方式）
-      const calculateOdds = (currentBets) => {
+      calculateOdds(currentBets) {
         const totalBet = Object.values(currentBets).reduce((a, b) => a + b, 0);
         const newOdds = {};
-
-        players.forEach((player) => {
+        this.players.forEach((player) => {
           const playerBet = currentBets[player.id] || 0;
           if (playerBet > 0 && totalBet > 0) {
-            // 競馬方式：投票額が少ないほど高いオッズ
             const ratio = totalBet / playerBet;
             newOdds[player.id] = Math.max(1.2, ratio * 0.5).toFixed(2);
           } else {
@@ -93,55 +87,47 @@
           }
         });
         return newOdds;
-      };
+      }
 
-      // プレイヤーのベット処理
-      const handleBet = (amount) => {
-        const currentPlayer = players[currentPlayerIdx];
-        if (amount > MAX_BET || amount < 1) return;
+      handleBet(amount) {
+        const currentPlayer = this.players[this.currentPlayerIdx];
+        if (amount > MAX_BET || amount < 1) return false;
+        this.bets[currentPlayer.id] = amount;
+        this.currentBet = amount;
+        this.odds = this.calculateOdds(this.bets);
+        this.message = `${currentPlayer.name} が $${amount} をベット`;
+        return true;
+      }
 
-        const newBets = { ...bets, [currentPlayer.id]: amount };
-        setBets(newBets);
-        setCurrentBet(amount);
-        setOdds(calculateOdds(newBets));
-        setMessage(`${currentPlayer.name} が $${amount} をベット`);
-      };
-
-      // 次のプレイヤーへ
-      const nextPlayer = () => {
-        if (!currentBet && currentPlayerIdx < players.length - 1) {
-          setMessage(`${players[currentPlayerIdx].name} がベットを置かなければなりません！`);
-          return;
+      nextPlayer() {
+        if (!this.currentBet && this.currentPlayerIdx < this.players.length - 1) {
+          this.message = `${this.players[this.currentPlayerIdx].name} がベットを置かなければなりません！`;
+          return false;
         }
-        if (currentPlayerIdx < players.length - 1) {
-          setCurrentPlayerIdx(currentPlayerIdx + 1);
-          setCurrentBet(0);
-          setMessage('');
+        if (this.currentPlayerIdx < this.players.length - 1) {
+          this.currentPlayerIdx += 1;
+          this.currentBet = 0;
+          this.message = '';
         } else {
-          setGameState('reveal');
-          setMessage('');
+          this.gameState = 'reveal';
+          this.message = '';
         }
-      };
+        return true;
+      }
 
-      // 主張する
-      const makeClaim = (claimValue) => {
-        setClaim(claimValue);
-        setGameState('reveal');
-      };
+      makeClaim(claimValue) {
+        this.claim = claimValue;
+        this.gameState = 'reveal';
+      }
 
-      // ラウンド結果
-      const resolveRound = () => {
-        // ランダムに主張の正偽を決定
+      resolveRound() {
         const claimIsTrue = Math.random() > 0.5;
-        setIsCorrect(claimIsTrue);
-        setRevealed(true);
-
-        // ベットの解算
-        const newPlayers = players.map((p) => {
+        this.isCorrect = claimIsTrue;
+        this.revealed = true;
+        this.players = this.players.map((p) => {
           let winnings = 0;
-          const bet = bets[p.id] || 0;
-          const oddsValue = parseFloat(odds[p.id]) || 1;
-
+          const bet = this.bets[p.id] || 0;
+          const oddsValue = parseFloat(this.odds[p.id]) || 1;
           if (bet > 0) {
             if (claimIsTrue) {
               winnings = Math.round(bet * oddsValue);
@@ -149,379 +135,153 @@
               winnings = -bet;
             }
           }
-
           return {
             ...p,
             bankroll: Math.max(p.bankroll + winnings, 0),
             status: p.bankroll + winnings <= 0 ? 'broke' : 'active'
           };
         });
-
-        setPlayers(newPlayers);
-        setMessage(
-          claimIsTrue
-            ? `主張は正しかった！正解した人たちが勝利🎉`
-            : `主張はウソだった！ウソを見破られました🔄`
-        );
-      };
-
-      // 次のラウンド
-      const nextRound = () => {
-        const activePlayers = players.filter((p) => p.status === 'active');
-        if (activePlayers.length < 2) {
-          setMessage('ゲーム終了！');
-          return;
-        }
-        setRound(round + 1);
-        setCurrentPlayerIdx((round) % players.length);
-        setBets({});
-        setDoubts({});
-        setRevealed(false);
-        setIsCorrect(null);
-        setClaim('');
-        setCurrentBet(0);
-        setOdds({});
-        setGameState('betting');
-        setMessage('新しいラウンドが始まります！');
-      };
-
-      // セットアップ画面
-      if (gameState === 'setup') {
-        return (
-          <div style={{ padding: '2rem', maxWidth: '600px', margin: '0 auto' }}>
-            <h1 style={{ fontSize: '28px', fontWeight: '600', marginBottom: '1.5rem', textAlign: 'center' }}>
-              🎲 ダウトゲーム
-            </h1>
-            <p style={{ textAlign: 'center', marginBottom: '2rem', color: '#666' }}>
-              競馬風のオッズシステムを搭載したベッティングゲーム
-            </p>
-            <div style={{ marginBottom: '1.5rem', background: '#fff', padding: '1.5rem', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', color: '#666', fontSize: '14px' }}>
-                プレイヤー数
-              </label>
-              <input
-                type="range"
-                min="2"
-                max="6"
-                value={playerCount}
-                onChange={(e) => setPlayerCount(Number(e.target.value))}
-                style={{ width: '100%', marginBottom: '1rem' }}
-              />
-              <p style={{ fontSize: '18px', fontWeight: '600', textAlign: 'center' }}>{playerCount}人でプレイ</p>
-            </div>
-            <button
-              onClick={startGame}
-              style={{
-                padding: '14px 24px',
-                fontSize: '16px',
-                fontWeight: '600',
-                background: '#2a78d6',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                width: '100%',
-                transition: 'background 0.2s'
-              }}
-              onMouseOver={(e) => e.target.style.background = '#1f5cab'}
-              onMouseOut={(e) => e.target.style.background = '#2a78d6'}
-            >
-              ゲーム開始 →
-            </button>
-          </div>
-        );
+        this.message = claimIsTrue ? `主張は正しかった！正解した人たちが勝利🎉` : `主張はウソだった！ウソを見破られました🔄`;
       }
 
-      const currentPlayer = players[currentPlayerIdx];
-      const activePlayers = players.filter((p) => p.status === 'active');
-
-      return (
-        <div style={{ padding: '2rem', maxWidth: '900px', margin: '0 auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', borderBottom: '1px solid #e0e0e0', paddingBottom: '1rem' }}>
-            <div>
-              <h1 style={{ fontSize: '24px', fontWeight: '600', margin: 0 }}>
-                🎲 ラウンド {round}
-              </h1>
-              <p style={{ color: '#666', margin: '4px 0 0 0', fontSize: '14px' }}>
-                {activePlayers.length} / {players.length} プレイヤー
-              </p>
-            </div>
-            <div style={{ textAlign: 'right', background: '#fff3cd', padding: '12px 16px', borderRadius: '8px' }}>
-              <p style={{ color: '#666', margin: '0 0 4px 0', fontSize: '12px' }}>賭け総額</p>
-              <p style={{ fontSize: '20px', fontWeight: '600', margin: 0 }}>
-                ${Object.values(bets).reduce((a, b) => a + b, 0)}
-              </p>
-            </div>
-          </div>
-
-          {/* プレイヤーステータス */}
-          <div style={{ marginBottom: '2rem' }}>
-            <h2 style={{ fontSize: '13px', color: '#999', marginBottom: '12px', fontWeight: '600', textTransform: 'uppercase' }}>
-              プレイヤー
-            </h2>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
-              {players.map((p) => (
-                <div
-                  key={p.id}
-                  style={{
-                    padding: '14px',
-                    background: p.id === currentPlayerIdx ? '#e3f2fd' : '#fff',
-                    border: p.id === currentPlayerIdx ? '2px solid #2a78d6' : '1px solid #e0e0e0',
-                    borderRadius: '8px',
-                    opacity: p.status === 'broke' ? 0.5 : 1,
-                    boxShadow: p.id === currentPlayerIdx ? '0 2px 8px rgba(42, 120, 214, 0.2)' : 'none'
-                  }}
-                >
-                  <p style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#999' }}>
-                    {p.name}
-                  </p>
-                  <p style={{ margin: 0, fontSize: '18px', fontWeight: '600' }}>
-                    ${p.bankroll}
-                  </p>
-                  {bets[p.id] && (
-                    <p style={{ margin: '6px 0 0 0', fontSize: '12px', color: '#d9534f', fontWeight: '500' }}>
-                      BET: ${bets[p.id]}
-                    </p>
-                  )}
-                  {p.status === 'broke' && (
-                    <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: '#999' }}>
-                      💔 破産
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* オッズボード */}
-          {Object.keys(odds).length > 0 && (
-            <div style={{ marginBottom: '2rem', padding: '16px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
-              <h2 style={{ fontSize: '13px', color: '#999', margin: '0 0 12px 0', fontWeight: '600', textTransform: 'uppercase' }}>
-                🏇 現在のオッズ
-              </h2>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '12px' }}>
-                {players.map((p) => (
-                  <div key={p.id} style={{ fontSize: '13px', padding: '8px', background: '#f8f8f7', borderRadius: '6px' }}>
-                    <span style={{ color: '#999' }}>{p.name}</span>
-                    <br />
-                    <span style={{ fontSize: '16px', fontWeight: '600', color: odds[p.id] !== '-' ? '#d9534f' : '#999' }}>
-                      {odds[p.id] !== '-' ? `${odds[p.id]}x` : '未ベット'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ベッティング フェーズ */}
-          {gameState === 'betting' && (
-            <div style={{ marginBottom: '2rem', padding: '20px', background: '#e3f2fd', borderRadius: '8px', border: '2px solid #2a78d6' }}>
-              <h2 style={{ margin: '0 0 12px 0', fontSize: '18px', fontWeight: '600', color: '#1f5cab' }}>
-                💰 {currentPlayer.name} のターン
-              </h2>
-              <p style={{ color: '#1f5cab', margin: '0 0 16px 0', fontSize: '14px' }}>
-                残高: ${currentPlayer.bankroll}
-              </p>
-              <input
-                type="number"
-                min="1"
-                max={currentPlayer.bankroll}
-                value={currentBet || ''}
-                onChange={(e) => setCurrentBet(Number(e.target.value))}
-                placeholder="ベット額を入力"
-                style={{ width: '100%', padding: '10px', marginBottom: '12px', fontSize: '16px', borderRadius: '6px', border: '1px solid #90caf9' }}
-              />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px', marginBottom: '16px' }}>
-                {[10, 25, 50, 75, 100].map((amt) => (
-                  <button
-                    key={amt}
-                    onClick={() => handleBet(Math.min(amt, currentPlayer.bankroll))}
-                    disabled={amt > currentPlayer.bankroll}
-                    style={{
-                      padding: '10px',
-                      fontSize: '13px',
-                      fontWeight: '600',
-                      background: 'white',
-                      border: '1px solid #2a78d6',
-                      color: '#2a78d6',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      opacity: amt > currentPlayer.bankroll ? 0.5 : 1,
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    ${amt}
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={nextPlayer}
-                disabled={!currentBet}
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  fontSize: '16px',
-                  fontWeight: '600',
-                  background: '#2a78d6',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: currentBet ? 'pointer' : 'not-allowed',
-                  opacity: !currentBet ? 0.5 : 1,
-                  transition: 'background 0.2s'
-                }}
-                onMouseOver={(e) => currentBet && (e.target.style.background = '#1f5cab')}
-                onMouseOut={(e) => currentBet && (e.target.style.background = '#2a78d6')}
-              >
-                次のプレイヤー →
-              </button>
-            </div>
-          )}
-
-          {/* 主張 フェーズ */}
-          {gameState === 'reveal' && !revealed && (
-            <div style={{ marginBottom: '2rem', padding: '20px', background: '#fff', border: '2px solid #ffc107', borderRadius: '8px' }}>
-              <h2 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: '600' }}>
-                🎯 主張を選んでください
-              </h2>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                <button
-                  onClick={() => makeClaim('本当')}
-                  style={{
-                    padding: '18px',
-                    fontSize: '16px',
-                    fontWeight: '600',
-                    background: '#d4edda',
-                    color: '#155724',
-                    border: '2px solid #28a745',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseOver={(e) => {
-                    e.target.style.background = '#c3e6cb';
-                    e.target.style.transform = 'scale(1.02)';
-                  }}
-                  onMouseOut={(e) => {
-                    e.target.style.background = '#d4edda';
-                    e.target.style.transform = 'scale(1)';
-                  }}
-                >
-                  ✓ 本当
-                </button>
-                <button
-                  onClick={() => makeClaim('ウソ')}
-                  style={{
-                    padding: '18px',
-                    fontSize: '16px',
-                    fontWeight: '600',
-                    background: '#f8d7da',
-                    color: '#721c24',
-                    border: '2px solid #dc3545',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseOver={(e) => {
-                    e.target.style.background = '#f5c6cb';
-                    e.target.style.transform = 'scale(1.02)';
-                  }}
-                  onMouseOut={(e) => {
-                    e.target.style.background = '#f8d7da';
-                    e.target.style.transform = 'scale(1)';
-                  }}
-                >
-                  ✕ ウソ
-                </button>
-              </div>
-              {claim && (
-                <button
-                  onClick={resolveRound}
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    fontSize: '16px',
-                    fontWeight: '600',
-                    background: '#ffc107',
-                    color: '#000',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    transition: 'background 0.2s'
-                  }}
-                  onMouseOver={(e) => e.target.style.background = '#ffb300'}
-                  onMouseOut={(e) => e.target.style.background = '#ffc107'}
-                >
-                  🎬 結果を発表
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* 結果表示 */}
-          {revealed && (
-            <div
-              style={{
-                marginBottom: '2rem',
-                padding: '24px',
-                background: isCorrect ? '#d4edda' : '#f8d7da',
-                border: `3px solid ${isCorrect ? '#28a745' : '#dc3545'}`,
-                borderRadius: '8px',
-                textAlign: 'center'
-              }}
-            >
-              <h2 style={{ margin: '0 0 12px 0', fontSize: '24px', fontWeight: '600', color: isCorrect ? '#155724' : '#721c24' }}>
-                {isCorrect ? '🎉 主張は正しかった！' : '🔄 主張はウソだった！'}
-              </h2>
-              <p style={{ margin: '0 0 20px 0', color: isCorrect ? '#155724' : '#721c24', fontSize: '15px' }}>
-                {message}
-              </p>
-              <div style={{ marginBottom: '16px', padding: '12px', background: 'rgba(255,255,255,0.7)', borderRadius: '6px' }}>
-                <h3 style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#666', textTransform: 'uppercase' }}>最終残高</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '8px' }}>
-                  {players.map((p) => (
-                    <div key={p.id} style={{ fontSize: '12px' }}>
-                      <span style={{ color: '#999' }}>{p.name}</span>
-                      <br />
-                      <span style={{ fontSize: '14px', fontWeight: '600' }}>
-                        ${p.bankroll}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <button
-                onClick={nextRound}
-                style={{
-                  padding: '12px 24px',
-                  fontSize: '16px',
-                  fontWeight: '600',
-                  background: isCorrect ? '#155724' : '#721c24',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  transition: 'background 0.2s'
-                }}
-                onMouseOver={(e) => e.target.style.opacity = '0.8'}
-                onMouseOut={(e) => e.target.style.opacity = '1'}
-              >
-                次のラウンド →
-              </button>
-            </div>
-          )}
-
-          {/* メッセージ表示 */}
-          {message && !revealed && (
-            <div style={{ padding: '12px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '6px', textAlign: 'center' }}>
-              <p style={{ margin: 0, color: '#666', fontSize: '14px' }}>{message}</p>
-            </div>
-          )}
-        </div>
-      );
+      nextRound() {
+        const activePlayers = this.players.filter((p) => p.status === 'active');
+        if (activePlayers.length < 2) {
+          this.message = 'ゲーム終了！';
+          return false;
+        }
+        this.round += 1;
+        this.currentPlayerIdx = (this.round - 1) % this.players.length;
+        this.bets = {};
+        this.revealed = false;
+        this.isCorrect = null;
+        this.claim = '';
+        this.currentBet = 0;
+        this.odds = {};
+        this.gameState = 'betting';
+        this.message = '新しいラウンドが始まります！';
+        return true;
+      }
     }
 
-    ReactDOM.render(<DoubtGame />, document.getElementById('root'));
+    const game = new GameState();
+
+    function render() {
+      const root = document.getElementById('root');
+      root.innerHTML = '';
+      if (game.gameState === 'setup') {
+        renderSetup(root);
+      } else {
+        renderGame(root);
+      }
+    }
+
+    function renderSetup(root) {
+      const div = document.createElement('div');
+      div.style.cssText = 'padding:2rem;max-width:600px;margin:0 auto;';
+      div.innerHTML = `
+        <h1 style="font-size:28px;font-weight:600;margin-bottom:1.5rem;text-align:center;">🎲 ダウトゲーム</h1>
+        <p style="text-align:center;margin-bottom:2rem;color:#666;">競馬風のオッズシステムを搭載したベッティングゲーム</p>
+        <div style="margin-bottom:1.5rem;background:#fff;padding:1.5rem;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+          <label style="display:block;margin-bottom:0.5rem;color:#666;font-size:14px;">プレイヤー数</label>
+          <input type="range" min="2" max="6" value="${game.playerCount}" id="playerCount" style="width:100%;margin-bottom:1rem;"/>
+          <p style="font-size:18px;font-weight:600;text-align:center;" id="playerDisplay">${game.playerCount}人でプレイ</p>
+        </div>
+        <button id="startBtn" style="padding:14px 24px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:pointer;width:100%;">ゲーム開始 →</button>
+      `;
+      root.appendChild(div);
+      document.getElementById('playerCount').addEventListener('change', (e) => {
+        game.playerCount = Number(e.target.value);
+        document.getElementById('playerDisplay').textContent = `${game.playerCount}人でプレイ`;
+      });
+      document.getElementById('startBtn').addEventListener('click', () => {
+        game.startGame();
+        render();
+      });
+    }
+
+    function renderGame(root) {
+      const div = document.createElement('div');
+      div.style.cssText = 'padding:2rem;max-width:900px;margin:0 auto;';
+      const currentPlayer = game.players[game.currentPlayerIdx];
+      const activePlayers = game.players.filter((p) => p.status === 'active');
+      const totalBet = Object.values(game.bets).reduce((a, b) => a + b, 0);
+      let html = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem;border-bottom:1px solid #e0e0e0;padding-bottom:1rem;">
+          <div>
+            <h1 style="font-size:24px;font-weight:600;margin:0;">🎲 ラウンド ${game.round}</h1>
+            <p style="color:#666;margin:4px 0 0 0;font-size:14px;">${activePlayers.length} / ${game.players.length} プレイヤー</p>
+          </div>
+          <div style="text-align:right;background:#fff3cd;padding:12px 16px;border-radius:8px;">
+            <p style="color:#666;margin:0 0 4px 0;font-size:12px;">賭け総額</p>
+            <p style="font-size:20px;font-weight:600;margin:0;">$${totalBet}</p>
+          </div>
+        </div>
+        <div style="margin-bottom:2rem;">
+          <h2 style="font-size:13px;color:#999;margin-bottom:12px;font-weight:600;text-transform:uppercase;">プレイヤー</h2>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:12px;">
+      `;
+      game.players.forEach((p) => {
+        html += `<div style="padding:14px;background:${p.id === game.currentPlayerIdx ? '#e3f2fd' : '#fff'};border:${p.id === game.currentPlayerIdx ? '2px solid #2a78d6' : '1px solid #e0e0e0'};border-radius:8px;opacity:${p.status === 'broke' ? 0.5 : 1};box-shadow:${p.id === game.currentPlayerIdx ? '0 2px 8px rgba(42, 120, 214, 0.2)' : 'none'};"><p style="margin:0 0 6px 0;font-size:12px;color:#999;">${p.name}</p><p style="margin:0;font-size:18px;font-weight:600;">$${p.bankroll}</p>${game.bets[p.id] ? `<p style="margin:6px 0 0 0;font-size:12px;color:#d9534f;font-weight:500;">BET: $${game.bets[p.id]}</p>` : ''}${p.status === 'broke' ? `<p style="margin:6px 0 0 0;font-size:11px;color:#999;">💔 破産</p>` : ''}</div>`;
+      });
+      html += `</div></div>`;
+      if (Object.keys(game.odds).length > 0) {
+        html += `<div style="margin-bottom:2rem;padding:16px;background:#fff;border:1px solid #e0e0e0;border-radius:8px;"><h2 style="font-size:13px;color:#999;margin:0 0 12px 0;font-weight:600;text-transform:uppercase;">🏇 現在のオッズ</h2><div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:12px;">`;
+        game.players.forEach((p) => {
+          html += `<div style="font-size:13px;padding:8px;background:#f8f8f7;border-radius:6px;"><span style="color:#999;">${p.name}</span><br/><span style="font-size:16px;font-weight:600;color:${game.odds[p.id] !== '-' ? '#d9534f' : '#999'};">${game.odds[p.id] !== '-' ? game.odds[p.id] + 'x' : '未ベット'}</span></div>`;
+        });
+        html += `</div></div>`;
+      }
+      if (game.gameState === 'betting') {
+        html += `<div style="margin-bottom:2rem;padding:20px;background:#e3f2fd;border-radius:8px;border:2px solid #2a78d6;"><h2 style="margin:0 0 12px 0;font-size:18px;font-weight:600;color:#1f5cab;">💰 ${currentPlayer.name} のターン</h2><p style="color:#1f5cab;margin:0 0 16px 0;font-size:14px;">残高: $${currentPlayer.bankroll}</p><input type="number" min="1" max="${currentPlayer.bankroll}" value="${game.currentBet || ''}" id="betInput" placeholder="ベット額を入力" style="width:100%;padding:10px;margin-bottom:12px;font-size:16px;border-radius:6px;border:1px solid #90caf9;"/><div style="display:grid;grid-template-columns:repeat(5, 1fr);gap:8px;margin-bottom:16px;">`;
+        [10, 25, 50, 75, 100].forEach((amt) => {
+          html += `<button class="bet-btn" data-amount="${amt}" style="padding:10px;font-size:13px;font-weight:600;background:white;border:1px solid #2a78d6;color:#2a78d6;border-radius:6px;cursor:pointer;opacity:${amt > currentPlayer.bankroll ? 0.5 : 1};" ${amt > currentPlayer.bankroll ? 'disabled' : ''}>$${amt}</button>`;
+        });
+        html += `</div><button id="nextPlayerBtn" style="width:100%;padding:12px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:6px;cursor:${game.currentBet ? 'pointer' : 'not-allowed'};opacity:${game.currentBet ? 1 : 0.5};">次のプレイヤー →</button></div>`;
+      }
+      if (game.gameState === 'reveal' && !game.revealed) {
+        html += `<div style="margin-bottom:2rem;padding:20px;background:#fff;border:2px solid #ffc107;border-radius:8px;"><h2 style="margin:0 0 16px 0;font-size:18px;font-weight:600;">🎯 主張を選んでください</h2><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;"><button id="claimTrue" style="padding:18px;font-size:16px;font-weight:600;background:#d4edda;color:#155724;border:2px solid #28a745;border-radius:8px;cursor:pointer;">✓ 本当</button><button id="claimFalse" style="padding:18px;font-size:16px;font-weight:600;background:#f8d7da;color:#721c24;border:2px solid #dc3545;border-radius:8px;cursor:pointer;">✕ ウソ</button></div>${game.claim ? `<button id="revealBtn" style="width:100%;padding:12px;font-size:16px;font-weight:600;background:#ffc107;color:#000;border:none;border-radius:6px;cursor:pointer;">🎬 結果を発表</button>` : ''}</div>`;
+      }
+      if (game.revealed) {
+        const bgColor = game.isCorrect ? '#d4edda' : '#f8d7da';
+        const borderColor = game.isCorrect ? '#28a745' : '#dc3545';
+        const textColor = game.isCorrect ? '#155724' : '#721c24';
+        html += `<div style="margin-bottom:2rem;padding:24px;background:${bgColor};border:3px solid ${borderColor};border-radius:8px;text-align:center;"><h2 style="margin:0 0 12px 0;font-size:24px;font-weight:600;color:${textColor};">${game.isCorrect ? '🎉 主張は正しかった！' : '🔄 主張はウソだった！'}</h2><p style="margin:0 0 20px 0;color:${textColor};font-size:15px;">${game.message}</p><div style="margin-bottom:16px;padding:12px;background:rgba(255,255,255,0.7);border-radius:6px;"><h3 style="margin:0 0 12px 0;font-size:13px;color:#666;text-transform:uppercase;">最終残高</h3><div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(100px, 1fr));gap:8px;">`;
+        game.players.forEach((p) => {
+          html += `<div style="font-size:12px;"><span style="color:#999;">${p.name}</span><br/><span style="font-size:14px;font-weight:600;">$${p.bankroll}</span></div>`;
+        });
+        html += `</div></div><button id="nextRoundBtn" style="padding:12px 24px;font-size:16px;font-weight:600;background:${textColor};color:white;border:none;border-radius:6px;cursor:pointer;">次のラウンド →</button></div>`;
+      }
+      if (game.message && !game.revealed) {
+        html += `<div style="padding:12px;background:#fff;border:1px solid #e0e0e0;border-radius:6px;text-align:center;"><p style="margin:0;color:#666;font-size:14px;">${game.message}</p></div>`;
+      }
+      div.innerHTML = html;
+      root.appendChild(div);
+      if (game.gameState === 'betting') {
+        document.getElementById('betInput').addEventListener('change', (e) => { game.currentBet = Number(e.target.value); });
+        document.querySelectorAll('.bet-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const amount = Number(btn.dataset.amount);
+            if (game.handleBet(amount)) render();
+          });
+        });
+        document.getElementById('nextPlayerBtn').addEventListener('click', () => {
+          if (game.nextPlayer()) render();
+        });
+      }
+      if (game.gameState === 'reveal' && !game.revealed) {
+        document.getElementById('claimTrue').addEventListener('click', () => { game.makeClaim('本当'); render(); });
+        document.getElementById('claimFalse').addEventListener('click', () => { game.makeClaim('ウソ'); render(); });
+        if (document.getElementById('revealBtn')) {
+          document.getElementById('revealBtn').addEventListener('click', () => { game.resolveRound(); render(); });
+        }
+      }
+      if (game.revealed && document.getElementById('nextRoundBtn')) {
+        document.getElementById('nextRoundBtn').addEventListener('click', () => { if (game.nextRound()) render(); });
+      }
+    }
+
+    render();
   </script>
 </body>
 </html>
