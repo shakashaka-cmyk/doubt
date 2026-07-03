@@ -12,16 +12,17 @@ const io = new Server(server);
 // 静的ファイルの配信
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ルートにアクセスされたらindex.htmlを返す
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // ==============================
-// ルーム（部屋）管理
+// ルーム（部屋）＆ゲームロジック
 // ==============================
 const INITIAL_BANKROLL = 100;
+const MAX_BET = 100;
 const MAX_PLAYERS = 8;
+const SIDES = ['本当', 'ウソ'];
 
 // roomCode -> room state
 const rooms = {};
@@ -40,123 +41,135 @@ function generateRoomCode() {
 
 function createRoom() {
   return {
-    gameState: 'waiting', // waiting -> betting -> reveal
+    gameState: 'waiting', // waiting -> claim -> betting -> reveal -> claim ... -> ended
     hostId: null,
-    players: {},      // playerId -> player object
-    playerOrder: [],  // 参加順のplayerId配列
+    players: {},       // playerId -> { id, name, bankroll, status }
+    playerOrder: [],   // 参加順のplayerId配列
     round: 1,
-    currentPlayerIdx: 0,
-    bets: {},
-    currentBet: 0,
-    claim: '',
-    revealed: false,
-    isCorrect: null,
+    storytellerId: null,
+    claim: '',         // トークプレイヤーが入力した「本当/ウソ」の真実（reveal前は非公開）
+    bets: {},          // bettorId -> { side, amount }
+    odds: {},          // { '本当': '2.10', 'ウソ': '-' }
     message: '',
-    odds: {},
   };
 }
 
 function playerList(room) {
-  return room.playerOrder
-    .map((id) => room.players[id])
-    .filter(Boolean);
+  return room.playerOrder.map((id) => room.players[id]).filter(Boolean);
 }
 
-// クライアントへ送るための公開用スナップショット
-function publicState(room, roomCode) {
-  return {
-    roomCode,
-    gameState: room.gameState,
-    hostId: room.hostId,
-    players: room.players,
-    playerOrder: room.playerOrder,
-    round: room.round,
-    currentPlayerIdx: room.currentPlayerIdx,
-    bets: room.bets,
-    currentBet: room.currentBet,
-    claim: room.claim,
-    revealed: room.revealed,
-    isCorrect: room.isCorrect,
-    message: room.message,
-    odds: room.odds,
-  };
+function activePlayers(room) {
+  return playerList(room).filter((p) => p.status === 'active');
 }
 
-function broadcast(roomCode) {
-  const room = rooms[roomCode];
-  if (!room) return;
-  io.to(roomCode).emit('stateUpdate', publicState(room, roomCode));
+// トークプレイヤーを除く、その回にベットできるプレイヤー
+function bettors(room) {
+  return activePlayers(room).filter((p) => p.id !== room.storytellerId);
+}
+
+function nextStorytellerId(room) {
+  const active = room.playerOrder.filter((id) => room.players[id] && room.players[id].status === 'active');
+  if (active.length === 0) return null;
+  const curIdx = active.indexOf(room.storytellerId);
+  return active[(curIdx + 1) % active.length];
 }
 
 function calculateOdds(room) {
-  const list = playerList(room);
-  const totalBet = Object.values(room.bets).reduce((a, b) => a + b, 0);
-  const newOdds = {};
-  list.forEach((player) => {
-    const playerBet = room.bets[player.id] || 0;
-    if (playerBet > 0 && totalBet > 0) {
-      const ratio = totalBet / playerBet;
-      newOdds[player.id] = Math.max(1.2, ratio * 0.5).toFixed(2);
-    } else {
-      newOdds[player.id] = '-';
-    }
+  const totals = { '本当': 0, 'ウソ': 0 };
+  Object.values(room.bets).forEach((b) => {
+    totals[b.side] += b.amount;
   });
-  return newOdds;
-}
-
-function currentPlayer(room) {
-  const list = playerList(room);
-  return list[room.currentPlayerIdx];
+  const totalPot = totals['本当'] + totals['ウソ'];
+  const odds = {};
+  SIDES.forEach((side) => {
+    odds[side] = totals[side] > 0 && totalPot > 0 ? (totalPot / totals[side]).toFixed(2) : '-';
+  });
+  return odds;
 }
 
 function startGame(room) {
-  room.bets = {};
-  room.gameState = 'betting';
-  room.claim = '';
-  room.currentBet = 0;
   room.round = 1;
-  room.currentPlayerIdx = 0;
-  room.revealed = false;
-  room.isCorrect = null;
+  room.storytellerId = nextStorytellerId(room);
+  room.bets = {};
+  room.claim = '';
   room.odds = {};
-  room.message = '';
+  room.gameState = 'claim';
+  const teller = room.players[room.storytellerId];
+  room.message = `${teller ? teller.name : ''}さんの番です。エピソードを話してください`;
+}
+
+function submitClaim(room, playerId, value) {
+  if (room.gameState !== 'claim') return false;
+  if (playerId !== room.storytellerId) return false;
+  if (SIDES.indexOf(value) === -1) return false;
+  room.claim = value;
+  room.gameState = 'betting';
+  room.odds = calculateOdds(room);
+  const teller = room.players[room.storytellerId];
+  room.message = `${teller ? teller.name : ''}さんの話を聞いて、本当かウソかにベットしてください！`;
+  return true;
+}
+
+function placeBet(room, playerId, side, amount) {
+  if (room.gameState !== 'betting') return false;
+  if (playerId === room.storytellerId) return false;
+  const player = room.players[playerId];
+  if (!player || player.status !== 'active') return false;
+  if (SIDES.indexOf(side) === -1) return false;
+  const bet = Number(amount);
+  const cap = Math.min(player.bankroll, MAX_BET);
+  if (!bet || bet < 1 || bet > cap) return false;
+
+  room.bets[playerId] = { side, amount: bet };
+  room.odds = calculateOdds(room);
+
+  const stillWaiting = bettors(room).filter((p) => !room.bets[p.id]);
+  if (stillWaiting.length === 0) {
+    resolveRound(room);
+  }
+  return true;
 }
 
 function resolveRound(room) {
-  const claimIsTrue = Math.random() > 0.5;
-  room.isCorrect = claimIsTrue;
-  room.revealed = true;
-  playerList(room).forEach((p) => {
-    let winnings = 0;
-    const bet = room.bets[p.id] || 0;
-    const oddsValue = parseFloat(room.odds[p.id]) || 1;
-    if (bet > 0) {
-      winnings = claimIsTrue ? Math.round(bet * oddsValue) : -bet;
+  room.odds = calculateOdds(room);
+  const winSide = room.claim;
+  const winOdds = parseFloat(room.odds[winSide]) || 1;
+
+  Object.entries(room.bets).forEach(([pid, bet]) => {
+    const p = room.players[pid];
+    if (!p) return;
+    let winnings;
+    if (bet.side === winSide) {
+      winnings = Math.round(bet.amount * winOdds);
+    } else {
+      winnings = -bet.amount;
     }
     p.bankroll = Math.max(p.bankroll + winnings, 0);
     p.status = p.bankroll <= 0 ? 'broke' : 'active';
   });
-  room.message = claimIsTrue
-    ? '主張は正しかった！正解した人たちが勝利🎉'
-    : '主張はウソだった！ウソを見破られました🔄';
+
+  room.gameState = 'reveal';
+  room.message = winSide === '本当'
+    ? '🎉 エピソードは本当だった！'
+    : '🔄 エピソードはウソだった！';
 }
 
 function nextRound(room) {
-  const activePlayers = playerList(room).filter((p) => p.status === 'active');
-  if (activePlayers.length < 2) {
+  if (room.gameState !== 'reveal') return false;
+  const active = activePlayers(room);
+  if (active.length < 2) {
+    room.gameState = 'ended';
     room.message = 'ゲーム終了！';
     return false;
   }
   room.round += 1;
-  room.currentPlayerIdx = (room.round - 1) % playerList(room).length;
+  room.storytellerId = nextStorytellerId(room);
   room.bets = {};
-  room.revealed = false;
-  room.isCorrect = null;
   room.claim = '';
-  room.currentBet = 0;
   room.odds = {};
-  room.gameState = 'betting';
-  room.message = '新しいラウンドが始まります！';
+  room.gameState = 'claim';
+  const teller = room.players[room.storytellerId];
+  room.message = `${teller ? teller.name : ''}さんの番です。エピソードを話してください`;
   return true;
 }
 
@@ -173,8 +186,46 @@ function addPlayerToRoom(room, name) {
   return playerId;
 }
 
+// クライアントごとにベットの中身（他人のside/amount）を隠した状態を作る
+function personalizedState(room, roomCode, viewerId) {
+  const isReveal = room.gameState === 'reveal' || room.gameState === 'ended';
+  const bets = {};
+  Object.entries(room.bets).forEach(([pid, bet]) => {
+    if (isReveal || pid === viewerId) {
+      bets[pid] = { side: bet.side, amount: bet.amount, submitted: true };
+    } else {
+      bets[pid] = { submitted: true };
+    }
+  });
+
+  return {
+    roomCode,
+    gameState: room.gameState,
+    hostId: room.hostId,
+    players: room.players,
+    playerOrder: room.playerOrder,
+    round: room.round,
+    storytellerId: room.storytellerId,
+    claim: isReveal || viewerId === room.storytellerId ? room.claim : '',
+    bets,
+    odds: room.odds,
+    message: room.message,
+  };
+}
+
+function broadcastPersonalized(roomCode) {
+  const room = rooms[roomCode];
+  if (!room) return;
+  const socketIds = io.sockets.adapter.rooms.get(roomCode);
+  if (!socketIds) return;
+  socketIds.forEach((socketId) => {
+    const s = io.sockets.sockets.get(socketId);
+    if (!s) return;
+    s.emit('stateUpdate', personalizedState(room, roomCode, s.data.playerId));
+  });
+}
+
 io.on('connection', (socket) => {
-  // 部屋を作る
   socket.on('createRoom', ({ playerName }, callback) => {
     const name = (playerName || '').toString().trim().slice(0, 20);
     if (!name) {
@@ -189,10 +240,9 @@ io.on('connection', (socket) => {
     socket.data.roomCode = roomCode;
     socket.data.playerId = playerId;
 
-    callback && callback({ ok: true, roomCode, playerId, state: publicState(room, roomCode) });
+    callback && callback({ ok: true, roomCode, playerId, state: personalizedState(room, roomCode, playerId) });
   });
 
-  // 既存の部屋に参加する
   socket.on('joinRoom', ({ roomCode, playerName }, callback) => {
     const code = (roomCode || '').toString().trim().toUpperCase();
     const name = (playerName || '').toString().trim().slice(0, 20);
@@ -217,78 +267,46 @@ io.on('connection', (socket) => {
     socket.data.roomCode = code;
     socket.data.playerId = playerId;
 
-    callback && callback({ ok: true, roomCode: code, playerId, state: publicState(room, code) });
-    broadcast(code);
+    callback && callback({ ok: true, roomCode: code, playerId, state: personalizedState(room, code, playerId) });
+    broadcastPersonalized(code);
   });
 
   socket.on('startGame', () => {
-    const { roomCode } = socket.data;
+    const { roomCode, playerId } = socket.data;
     const room = rooms[roomCode];
-    if (!room) return;
+    if (!room || room.gameState !== 'waiting') return;
+    if (room.hostId !== playerId) return; // ホストのみ開始できる
     if (playerList(room).length < 2) return;
     startGame(room);
-    broadcast(roomCode);
+    broadcastPersonalized(roomCode);
   });
 
-  socket.on('placeBet', (amount) => {
+  // トークプレイヤーが「本当/ウソ」を入力（他プレイヤーには非公開）
+  socket.on('submitClaim', (value) => {
     const { roomCode, playerId } = socket.data;
     const room = rooms[roomCode];
-    if (!room || room.gameState !== 'betting') return;
-    const player = currentPlayer(room);
-    if (!player || player.id !== playerId) return; // 自分のターンのみ
-    const bet = Number(amount);
-    if (!bet || bet < 1 || bet > player.bankroll) return;
-
-    room.bets[player.id] = bet;
-    room.currentBet = bet;
-    room.odds = calculateOdds(room);
-    room.message = `${player.name} が $${bet} をベット`;
-    broadcast(roomCode);
-  });
-
-  socket.on('nextPlayer', () => {
-    const { roomCode, playerId } = socket.data;
-    const room = rooms[roomCode];
-    if (!room || room.gameState !== 'betting') return;
-    const list = playerList(room);
-    const player = currentPlayer(room);
-    if (!player || player.id !== playerId) return;
-    if (!room.currentBet) return;
-
-    if (room.currentPlayerIdx < list.length - 1) {
-      room.currentPlayerIdx += 1;
-      room.currentBet = 0;
-      room.message = '';
-    } else {
-      room.gameState = 'reveal';
-      room.message = '';
+    if (!room) return;
+    if (submitClaim(room, playerId, value)) {
+      broadcastPersonalized(roomCode);
     }
-    broadcast(roomCode);
   });
 
-  socket.on('makeClaim', (claimValue) => {
-    const { roomCode } = socket.data;
+  // ベットプレイヤーが本当/ウソ側に金額を賭ける（各自好きなタイミングで同時に）
+  socket.on('placeBet', ({ side, amount } = {}) => {
+    const { roomCode, playerId } = socket.data;
     const room = rooms[roomCode];
-    if (!room || room.gameState !== 'reveal' || room.revealed) return;
-    if (claimValue !== '本当' && claimValue !== 'ウソ') return;
-    room.claim = claimValue;
-    broadcast(roomCode);
-  });
-
-  socket.on('reveal', () => {
-    const { roomCode } = socket.data;
-    const room = rooms[roomCode];
-    if (!room || room.gameState !== 'reveal' || room.revealed || !room.claim) return;
-    resolveRound(room);
-    broadcast(roomCode);
+    if (!room) return;
+    if (placeBet(room, playerId, side, amount)) {
+      broadcastPersonalized(roomCode);
+    }
   });
 
   socket.on('nextRound', () => {
     const { roomCode } = socket.data;
     const room = rooms[roomCode];
-    if (!room || !room.revealed) return;
+    if (!room) return;
     nextRound(room);
-    broadcast(roomCode);
+    broadcastPersonalized(roomCode);
   });
 
   socket.on('disconnect', () => {
@@ -307,7 +325,7 @@ io.on('connection', (socket) => {
         delete rooms[roomCode];
         return;
       }
-      broadcast(roomCode);
+      broadcastPersonalized(roomCode);
     }
   });
 });
