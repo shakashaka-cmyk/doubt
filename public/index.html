@@ -110,11 +110,18 @@
 
         <div style="margin-bottom:1.5rem;padding:1.5rem;background:#fff;border:1px solid #e0e0e0;border-radius:12px;">
           <h3 style="font-size:14px;font-weight:600;margin-bottom:1rem;color:#666;">👤 プレイヤー名を入力</h3>
-          <input type="text" id="playerNameInput" placeholder="あなたの名前" maxlength="20" value="${client.playerName}" style="width:100%;padding:12px;margin-bottom:1rem;font-size:16px;border-radius:8px;border:1px solid #ddd;"/>
-          <button id="createRoomBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:pointer;">🆕 部屋を作る</button>
+          <input type="text" id="playerNameInput" placeholder="あなたの名前" maxlength="20" value="${client.playerName}" style="width:100%;padding:12px;font-size:16px;border-radius:8px;border:1px solid #ddd;"/>
         </div>
 
         <div style="margin-bottom:1.5rem;padding:1.5rem;background:#fff;border:1px solid #e0e0e0;border-radius:12px;">
+          <button id="createRoomBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:pointer;margin-bottom:1.5rem;">🆕 部屋を作る</button>
+
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:1.5rem;color:#999;font-size:12px;">
+            <div style="flex:1;height:1px;background:#e0e0e0;"></div>
+            <span>または</span>
+            <div style="flex:1;height:1px;background:#e0e0e0;"></div>
+          </div>
+
           <h3 style="font-size:14px;font-weight:600;margin-bottom:1rem;color:#666;">🔑 ルームコードで参加</h3>
           <input type="text" id="roomCodeInput" placeholder="例：AB12CD" maxlength="6" style="width:100%;padding:12px;margin-bottom:1rem;font-size:16px;letter-spacing:2px;text-transform:uppercase;border-radius:8px;border:1px solid #ddd;"/>
           <button id="joinRoomBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#28a745;color:white;border:none;border-radius:8px;cursor:pointer;">→ 部屋に参加する</button>
