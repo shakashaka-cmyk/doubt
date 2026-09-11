@@ -498,9 +498,11 @@
       `;
       root.appendChild(div);
       
-      document.getElementById('startGameBtn').addEventListener('click', () => {
+      document.getElementById('startGameBtn').addEventListener('click', async () => {
         if (game.isHost) {
+          document.getElementById('startGameBtn').disabled = true;
           game.startGame();
+          await game.syncToServer();
           render();
         }
       });
@@ -540,7 +542,7 @@
           
           render();
         }
-      }, 1000);
+      }, 500);
     }
 
     function renderSpeaking(root) {
