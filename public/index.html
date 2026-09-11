@@ -126,6 +126,23 @@
         this.revealed = false;
         this.message = '';
         saveGameState();
+        this.syncToServer();
+      }
+      
+      async syncToServer() {
+        try {
+          await fetch(`/api/rooms/${this.roomCode}/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              gameState: this.gameState,
+              players: this.players,
+              currentSpeakerIdx: this.currentSpeakerIdx
+            })
+          });
+        } catch (e) {
+          console.error('Failed to sync to server:', e);
+        }
       }
 
       setSpeakerClaim(isTruth) {
