@@ -137,7 +137,8 @@
             body: JSON.stringify({
               gameState: this.gameState,
               players: this.players,
-              currentSpeakerIdx: this.currentSpeakerIdx
+              currentSpeakerIdx: this.currentSpeakerIdx,
+              speakerClaim: this.speakerClaim
             })
           });
         } catch (e) {
@@ -150,6 +151,7 @@
         this.gameState = 'talking';
         this.message = '';
         saveGameState();
+        this.syncToServer();
       }
 
       setBet(amount) {
@@ -656,6 +658,8 @@
       if (isYourTurn) {
         document.getElementById('finishTalkBtn').addEventListener('click', () => {
           game.gameState = 'revealing';
+          game.saveGameState();
+          game.syncToServer();
           render();
         });
       } else {
