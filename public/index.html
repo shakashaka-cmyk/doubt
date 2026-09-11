@@ -354,6 +354,7 @@
       root.appendChild(div);
       
       document.getElementById('createRoomBtn').addEventListener('click', async () => {
+        localStorage.removeItem('doubt_gameState');
         const roomCode = await createRoom();
         if (roomCode) {
           game = new GameState(roomCode);
