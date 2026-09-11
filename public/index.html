@@ -69,7 +69,6 @@
       });
     }
 
-    // IndexedDB に保存
     function saveToIndexedDB(key, data) {
       if (!db) return;
       const transaction = db.transaction([storeName], 'readwrite');
@@ -77,27 +76,6 @@
       store.put(data, key);
     }
 
-    // IndexedDB から読み込み
-    function loadFromIndexedDB(key) {
-      return new Promise((resolve) => {
-        if (!db) {
-          resolve(null);
-          return;
-        }
-        const transaction = db.transaction([storeName], 'readonly');
-        const store = transaction.objectStore(storeName);
-        const request = store.get(key);
-        
-        request.onsuccess = () => {
-          resolve(request.result || null);
-        };
-        request.onerror = () => {
-          resolve(null);
-        };
-      });
-    }
-
-    // ゲーム状態を保存（LocalStorage + IndexedDB）
     function saveGameState() {
       if (!game) return;
       const stateData = JSON.stringify(game);
@@ -105,7 +83,6 @@
       saveToIndexedDB('lastGameState', stateData);
     }
 
-    // グローバルゲーム状態
     const gameRooms = {};
 
     class GameState {
@@ -143,6 +120,7 @@
         localStorage.setItem('doubt_roomCode', this.roomCode);
         this.gameState = 'waiting';
         saveGameState();
+        this.syncToServer();
       }
 
       startGame() {
@@ -153,6 +131,7 @@
         this.round = 1;
         this.currentPlayerIdx = 0;
         saveGameState();
+        this.syncToServer();
       }
 
       calculateOdds(currentBets) {
@@ -178,6 +157,7 @@
         this.odds = this.calculateOdds(this.bets);
         this.message = `${currentPlayer.name} が $${amount} をベット`;
         saveGameState();
+        this.syncToServer();
         return true;
       }
 
@@ -195,6 +175,7 @@
           this.message = '';
         }
         saveGameState();
+        this.syncToServer();
         return true;
       }
 
@@ -202,6 +183,7 @@
         this.claim = claimValue;
         this.gameState = 'reveal';
         saveGameState();
+        this.syncToServer();
       }
 
       resolveRound() {
@@ -229,6 +211,7 @@
         this.playerList.forEach(p => this.players[p.id] = p);
         this.message = claimIsTrue ? `主張は正しかった！正解した人たちが勝利🎉` : `主張はウソだった！ウソを見破られました🔄`;
         saveGameState();
+        this.syncToServer();
       }
 
       nextRound() {
@@ -248,6 +231,7 @@
         this.gameState = 'betting';
         this.message = '新しいラウンドが始まります！';
         saveGameState();
+        this.syncToServer();
         return true;
       }
 
@@ -262,14 +246,48 @@
         };
         this.playerList = Object.values(this.players);
         saveGameState();
+        this.syncToServer();
         return true;
+      }
+
+      async syncToServer() {
+        if (!this.roomCode) return;
+        try {
+          await fetch(`/api/rooms/${this.roomCode}/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              gameState: this.gameState,
+              players: this.playerList
+            })
+          });
+        } catch (e) {
+          console.error('Server sync failed:', e);
+        }
       }
     }
 
     let game = null;
 
-    function generateRoomCode() {
-      return Math.random().toString(36).substring(2, 8).toUpperCase();
+    async function createRoom() {
+      try {
+        const response = await fetch('/api/rooms/create', { method: 'POST' });
+        const data = await response.json();
+        return data.roomCode;
+      } catch (e) {
+        console.error('Failed to create room:', e);
+        return null;
+      }
+    }
+
+    async function verifyRoom(roomCode) {
+      try {
+        const response = await fetch(`/api/rooms/${roomCode}`);
+        return response.ok;
+      } catch (e) {
+        console.error('Failed to verify room:', e);
+        return false;
+      }
     }
 
     async function loadGameState() {
@@ -329,24 +347,33 @@
       `;
       root.appendChild(div);
       
-      document.getElementById('createRoomBtn').addEventListener('click', () => {
-        const roomCode = generateRoomCode();
-        game = new GameState(roomCode);
-        game.isHost = true;
-        saveGameState();
-        render();
+      document.getElementById('createRoomBtn').addEventListener('click', async () => {
+        const roomCode = await createRoom();
+        if (roomCode) {
+          game = new GameState(roomCode);
+          game.isHost = true;
+          saveGameState();
+          render();
+        } else {
+          alert('ルーム作成に失敗しました');
+        }
       });
       
-      document.getElementById('joinRoomBtn').addEventListener('click', () => {
+      document.getElementById('joinRoomBtn').addEventListener('click', async () => {
         const roomCode = prompt('ルームコードを入力してください (例: ABC123):').toUpperCase().trim();
         if (!roomCode) return;
         
-        if (!gameRooms[roomCode]) {
+        const exists = await verifyRoom(roomCode);
+        if (!exists) {
           alert('そのルームコードは存在しません');
           return;
         }
         
-        game = gameRooms[roomCode];
+        if (!gameRooms[roomCode]) {
+          game = new GameState(roomCode);
+        } else {
+          game = gameRooms[roomCode];
+        }
         saveGameState();
         render();
       });
