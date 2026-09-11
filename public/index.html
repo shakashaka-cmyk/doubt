@@ -490,6 +490,21 @@
           render();
         }
       });
+      
+      // 定期的にサーバーから状態を更新
+      const updateInterval = setInterval(async () => {
+        if (!game || game.gameState !== 'waiting') {
+          clearInterval(updateInterval);
+          return;
+        }
+        
+        const roomState = await loadRoomState(game.roomCode);
+        if (roomState) {
+          game.players = roomState.players;
+          game.playerList = Object.values(roomState.players);
+          render();
+        }
+      }, 1000);
     }
 
     function renderSpeaking(root) {
