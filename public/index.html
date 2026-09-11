@@ -103,6 +103,7 @@
         this.odds = {};
         this.playerList = [];
         this.isHost = false;
+        this.hostId = null;
       }
 
       joinGame(name) {
@@ -360,6 +361,7 @@
         if (roomCode) {
           game = new GameState(roomCode);
           game.isHost = true;
+          game.hostId = null; // ロビー画面ではまだホストIDがない
           saveGameState();
           render();
         } else {
@@ -401,6 +403,8 @@
         game.players = roomState.players;
         game.playerList = Object.values(roomState.players);
         game.gameState = 'waiting';
+        game.isHost = result.isHost;
+        game.hostId = result.hostId;
         
         localStorage.setItem('doubt_playerId', game.playerId);
         localStorage.setItem('doubt_playerName', playerName);
@@ -444,14 +448,24 @@
         if (e.key === 'Enter') document.getElementById('joinBtn').click();
       });
       
-      document.getElementById('joinBtn').addEventListener('click', () => {
+      document.getElementById('joinBtn').addEventListener('click', async () => {
         const name = input.value.trim();
         if (!name) {
           alert('名前を入力してください');
           return;
         }
         game.joinGame(name);
+        
+        // サーバーに参加情報を送信してホスト判定を受け取る
+        const result = await joinRoomAsPlayer(game.roomCode, name);
+        if (result) {
+          game.playerId = result.playerId;
+          game.isHost = result.isHost;
+          game.hostId = result.hostId;
+        }
+        
         gameRooms[game.roomCode] = game;
+        saveGameState();
         render();
       });
     }
@@ -519,15 +533,16 @@
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-          <button id="startGameBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:${Object.keys(game.players).length >= 2 ? 'pointer' : 'not-allowed'};opacity:${Object.keys(game.players).length >= 2 ? 1 : 0.5};">ゲーム開始 →</button>
+          <button id="startGameBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:${game.isHost ? '#2a78d6' : '#ccc'};color:white;border:none;border-radius:8px;cursor:${game.isHost && Object.keys(game.players).length >= 2 ? 'pointer' : 'not-allowed'};opacity:${game.isHost && Object.keys(game.players).length >= 2 ? 1 : 0.5};" ${!game.isHost || Object.keys(game.players).length < 2 ? 'disabled' : ''}>ゲーム開始 →</button>
           <button id="leaveRoomBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#dc3545;color:white;border:none;border-radius:8px;cursor:pointer;">退出</button>
         </div>
+        ${!game.isHost ? `<p style="text-align:center;color:#999;font-size:12px;margin-top:1rem;">💡 ホストがゲーム開始を待っています</p>` : ''}
       `;
       
       root.appendChild(div);
       
       document.getElementById('startGameBtn').addEventListener('click', () => {
-        if (Object.keys(game.players).length >= 2) {
+        if (game.isHost && Object.keys(game.players).length >= 2) {
           game.startGame();
           render();
         }

@@ -22,6 +22,15 @@ app.post('/api/rooms/create', (req, res) => {
     code: roomCode,
     players: {},
     gameState: 'lobby',
+    hostId: null,
+    round: 1,
+    currentPlayerIdx: 0,
+    bets: {},
+    claim: '',
+    revealed: false,
+    isCorrect: null,
+    odds: {},
+    message: '',
     createdAt: Date.now(),
     lastActivity: Date.now()
   };
@@ -70,7 +79,8 @@ app.get('/api/rooms/:roomCode/state', (req, res) => {
     revealed: room.revealed,
     isCorrect: room.isCorrect,
     odds: room.odds,
-    message: room.message
+    message: room.message,
+    hostId: room.hostId
   });
 });
 
@@ -109,11 +119,17 @@ app.post('/api/rooms/:roomCode/join', (req, res) => {
     return res.status(404).json({ error: 'Room not found' });
   }
   
-  if (room.gameState !== 'waiting') {
+  if (room.gameState !== 'waiting' && room.gameState !== 'lobby') {
     return res.status(400).json({ error: 'Game already started' });
   }
   
   const playerId = Math.random().toString(36).substring(7);
+  
+  // 最初のプレイヤーをホストに設定
+  if (!room.hostId) {
+    room.hostId = playerId;
+  }
+  
   room.players[playerId] = {
     id: playerId,
     name: playerName,
@@ -121,9 +137,13 @@ app.post('/api/rooms/:roomCode/join', (req, res) => {
     status: 'active'
   };
   
+  room.lastActivity = Date.now();
+  
   res.json({
     playerId,
-    players: room.players
+    isHost: playerId === room.hostId,
+    players: room.players,
+    hostId: room.hostId
   });
 });
 
