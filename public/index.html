@@ -138,7 +138,8 @@
               gameState: this.gameState,
               players: this.players,
               currentSpeakerIdx: this.currentSpeakerIdx,
-              speakerClaim: this.speakerClaim
+              speakerClaim: this.speakerClaim,
+              bets: this.bets
             })
           });
         } catch (e) {
@@ -159,6 +160,7 @@
         this.bets[this.playerId] = amount;
         this.currentBetAmount = amount;
         saveGameState();
+        this.syncToServer();
         return true;
       }
 
@@ -328,7 +330,7 @@
           renderSpeaking(root);
         } else if (game.gameState === 'talking') {
           renderTalking(root);
-        } else if (game.gameState === 'revealing') {
+        } else if (game.gameState === 'betting') {
           renderBetting(root);
         } else if (game.gameState === 'result') {
           renderResult(root);
@@ -670,7 +672,7 @@
       
       if (isYourTurn) {
         document.getElementById('finishTalkBtn').addEventListener('click', () => {
-          game.gameState = 'revealing';
+          game.gameState = 'betting';
           game.saveGameState();
           game.syncToServer();
           render();
@@ -776,25 +778,44 @@
             render();
           }
         });
+      } else if (isYourTurn) {
+        // 話し手：定期的にゲーム状態を更新（全員がベットしたかチェック）
+        const updateInterval = setInterval(async () => {
+          if (!game || game.gameState !== 'betting') {
+            clearInterval(updateInterval);
+            return;
+          }
+          
+          const roomState = await loadRoomState(game.roomCode);
+          if (roomState) {
+            game.bets = roomState.bets || {};
+            render();
+          }
+        }, 1000);
       }
       
       if (playerNotBet.length === 0 && game.isHost) {
         document.getElementById('revealBtn').addEventListener('click', () => {
           game.revealResult();
           game.gameState = 'result';
+          game.saveGameState();
+          game.syncToServer();
           render();
         });
       } else if (playerNotBet.length === 0 && !game.isHost) {
         // 参加者：定期的にゲーム状態を更新
         const updateInterval = setInterval(async () => {
-          if (!game || game.gameState !== 'revealing') {
+          if (!game || game.gameState !== 'betting') {
             clearInterval(updateInterval);
             return;
           }
           
           const roomState = await loadRoomState(game.roomCode);
-          if (roomState && roomState.gameState !== 'revealing') {
+          if (roomState && roomState.gameState !== 'betting') {
             game.gameState = roomState.gameState;
+            game.bets = roomState.bets || {};
+            saveGameState();
+            clearInterval(updateInterval);
             render();
           }
         }, 500);

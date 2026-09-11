@@ -64,14 +64,15 @@ app.get('/api/rooms/:roomCode/state', (req, res) => {
     hostId: room.hostId,
     currentSpeakerIdx: room.currentSpeakerIdx,
     speakers: room.speakers,
-    speakerClaim: room.speakerClaim || null
+    speakerClaim: room.speakerClaim || null,
+    bets: room.bets || {}
   });
 });
 
 // ルーム状態更新API
 app.post('/api/rooms/:roomCode/update', (req, res) => {
   const { roomCode } = req.params;
-  const { gameState, players, currentSpeakerIdx, speakerClaim } = req.body;
+  const { gameState, players, currentSpeakerIdx, speakerClaim, bets } = req.body;
   
   const room = gameRooms[roomCode];
   if (!room) {
@@ -83,6 +84,9 @@ app.post('/api/rooms/:roomCode/update', (req, res) => {
   room.currentSpeakerIdx = currentSpeakerIdx;
   if (speakerClaim !== undefined) {
     room.speakerClaim = speakerClaim;
+  }
+  if (bets !== undefined) {
+    room.bets = bets;
   }
   room.lastActivity = Date.now();
   
