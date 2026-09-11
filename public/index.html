@@ -273,8 +273,20 @@
       if (savedState) {
         try {
           game = Object.assign(new GameState(''), JSON.parse(savedState));
+          
+          // ルームが存在するか確認
+          const roomExists = await verifyRoom(game.roomCode);
+          if (!roomExists) {
+            // ルームが存在しない場合は初期化
+            console.log('Room not found, clearing game state');
+            localStorage.removeItem('doubt_gameState');
+            game = null;
+            return false;
+          }
+          
           return true;
         } catch (e) {
+          console.error('Failed to load game state:', e);
           localStorage.removeItem('doubt_gameState');
           return false;
         }
@@ -286,22 +298,32 @@
       const root = document.getElementById('root');
       root.innerHTML = '';
       
-      if (!game) {
-        renderRoomSelect(root);
-      } else if (game.gameState === 'lobby') {
-        renderLobby(root);
-      } else if (game.gameState === 'waiting') {
-        renderWaiting(root);
-      } else if (game.gameState === 'speaking') {
-        renderSpeaking(root);
-      } else if (game.gameState === 'talking') {
-        renderTalking(root);
-      } else if (game.gameState === 'revealing') {
-        renderBetting(root);
-      } else if (game.gameState === 'gameover') {
-        renderGameOver(root);
-      } else {
-        renderGame(root);
+      try {
+        if (!game) {
+          renderRoomSelect(root);
+        } else if (game.gameState === 'lobby') {
+          renderLobby(root);
+        } else if (game.gameState === 'waiting') {
+          renderWaiting(root);
+        } else if (game.gameState === 'speaking') {
+          renderSpeaking(root);
+        } else if (game.gameState === 'talking') {
+          renderTalking(root);
+        } else if (game.gameState === 'revealing') {
+          renderBetting(root);
+        } else if (game.gameState === 'gameover') {
+          renderGameOver(root);
+        } else if (game.gameState === 'result') {
+          renderResult(root);
+        } else {
+          renderRoomSelect(root);
+        }
+      } catch (e) {
+        console.error('Render error:', e);
+        // エラーが発生した場合はゲーム状態をリセット
+        game = null;
+        localStorage.removeItem('doubt_gameState');
+        root.innerHTML = '<div style="padding:2rem;text-align:center;"><p style="color:#dc3545;font-weight:600;">エラーが発生しました。ページをリロードしてください。</p></div>';
       }
     }
 
