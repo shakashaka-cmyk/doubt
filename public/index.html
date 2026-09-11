@@ -462,7 +462,10 @@
           <button id="addPlayerBtn" style="width:100%;padding:12px;font-size:14px;font-weight:600;background:#28a745;color:white;border:none;border-radius:6px;cursor:pointer;margin-bottom:1rem;" ${Object.keys(game.players).length >= MAX_PLAYERS ? 'disabled' : ''}>プレイヤーを追加</button>
         </div>
 
-        <button id="startGameBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:${Object.keys(game.players).length >= 2 ? 'pointer' : 'not-allowed'};opacity:${Object.keys(game.players).length >= 2 ? 1 : 0.5};">ゲーム開始 →</button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
+          <button id="startGameBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:${Object.keys(game.players).length >= 2 ? 'pointer' : 'not-allowed'};opacity:${Object.keys(game.players).length >= 2 ? 1 : 0.5};">ゲーム開始 →</button>
+          <button id="leaveRoomBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#dc3545;color:white;border:none;border-radius:8px;cursor:pointer;">退出</button>
+        </div>
       `;
       
       root.appendChild(div);
@@ -486,6 +489,14 @@
       document.getElementById('startGameBtn').addEventListener('click', () => {
         if (Object.keys(game.players).length >= 2) {
           game.startGame();
+          render();
+        }
+      });
+      
+      document.getElementById('leaveRoomBtn').addEventListener('click', () => {
+        if (confirm('ルームを退出しますか？')) {
+          game = null;
+          localStorage.removeItem('doubt_gameState');
           render();
         }
       });
