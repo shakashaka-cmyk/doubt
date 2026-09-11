@@ -598,10 +598,23 @@
           }
           
           const roomState = await loadRoomState(game.roomCode);
-          if (roomState && roomState.speakerClaim !== null && game.speakerClaim === null) {
-            game.speakerClaim = roomState.speakerClaim;
-            game.gameState = roomState.gameState;
-            render();
+          if (roomState) {
+            // gameStateが変わったかチェック
+            if (roomState.gameState !== 'speaking') {
+              game.gameState = roomState.gameState;
+              game.speakerClaim = roomState.speakerClaim;
+              saveGameState();
+              clearInterval(updateInterval);
+              render();
+              return;
+            }
+            
+            // speakerClaimが設定されたかチェック
+            if (roomState.speakerClaim !== null && game.speakerClaim === null) {
+              game.speakerClaim = roomState.speakerClaim;
+              saveGameState();
+              render();
+            }
           }
         }, 500);
       }
