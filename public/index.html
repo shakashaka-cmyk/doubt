@@ -31,7 +31,6 @@
     }
     
     input[type="number"],
-    input[type="range"],
     input[type="text"] {
       font-family: inherit;
     }
@@ -45,27 +44,24 @@
     const MAX_BET = 100;
     const MAX_PLAYERS = 8;
 
-    // IndexedDB の初期化
     let db = null;
     const dbName = 'DoubtGameDB';
     const storeName = 'gameStates';
 
     function initIndexedDB() {
-      return new Promise((resolve, reject) => {
+      return new Promise((resolve) => {
         const request = indexedDB.open(dbName, 1);
-        
-        request.onerror = () => reject(request.error);
         request.onsuccess = () => {
           db = request.result;
           resolve();
         };
-        
         request.onupgradeneeded = (event) => {
           const db = event.target.result;
           if (!db.objectStoreNames.contains(storeName)) {
             db.createObjectStore(storeName);
           }
         };
+        request.onerror = () => resolve();
       });
     }
 
@@ -83,8 +79,6 @@
       saveToIndexedDB('lastGameState', stateData);
     }
 
-    const gameRooms = {};
-
     class GameState {
       constructor(roomCode) {
         this.roomCode = roomCode;
@@ -92,18 +86,18 @@
         this.playerId = null;
         this.playerName = '';
         this.players = {};
-        this.round = 1;
-        this.currentPlayerIdx = 0;
-        this.bets = {};
-        this.currentBet = 0;
-        this.claim = '';
-        this.revealed = false;
-        this.isCorrect = null;
-        this.message = '';
-        this.odds = {};
         this.playerList = [];
         this.isHost = false;
         this.hostId = null;
+        
+        // ゲーム進行用
+        this.currentSpeakerIdx = 0;
+        this.speakerClaim = null; // 話し手の主張（true=本当, false=嘘）
+        this.bets = {}; // { playerId: amount }
+        this.currentBetAmount = 0;
+        this.revealed = false;
+        this.message = '';
+        this.odds = {}; // { playerId: oddsValue }
       }
 
       joinGame(name) {
@@ -113,7 +107,8 @@
           id: this.playerId,
           name: name,
           bankroll: INITIAL_BANKROLL,
-          status: 'active'
+          status: 'active',
+          earnings: 0
         };
         this.playerList = Object.values(this.players);
         localStorage.setItem('doubt_playerId', this.playerId);
@@ -121,158 +116,110 @@
         localStorage.setItem('doubt_roomCode', this.roomCode);
         this.gameState = 'waiting';
         saveGameState();
-        this.syncToServer();
       }
 
       startGame() {
-        this.bets = {};
-        this.gameState = 'betting';
-        this.claim = '';
-        this.currentBet = 0;
-        this.round = 1;
-        this.currentPlayerIdx = 0;
-        saveGameState();
-        this.syncToServer();
-      }
-
-      calculateOdds(currentBets) {
-        const totalBet = Object.values(currentBets).reduce((a, b) => a + b, 0);
-        const newOdds = {};
-        this.playerList.forEach((player) => {
-          const playerBet = currentBets[player.id] || 0;
-          if (playerBet > 0 && totalBet > 0) {
-            const ratio = totalBet / playerBet;
-            newOdds[player.id] = Math.max(1.2, ratio * 0.5).toFixed(2);
-          } else {
-            newOdds[player.id] = '-';
-          }
-        });
-        return newOdds;
-      }
-
-      handleBet(amount) {
-        const currentPlayer = this.playerList[this.currentPlayerIdx];
-        if (amount > MAX_BET || amount < 1) return false;
-        this.bets[currentPlayer.id] = amount;
-        this.currentBet = amount;
-        this.odds = this.calculateOdds(this.bets);
-        this.message = `${currentPlayer.name} が $${amount} をベット`;
-        saveGameState();
-        this.syncToServer();
-        return true;
-      }
-
-      nextPlayer() {
-        if (!this.currentBet && this.currentPlayerIdx < this.playerList.length - 1) {
-          this.message = `${this.playerList[this.currentPlayerIdx].name} がベットを置かなければなりません！`;
-          return false;
-        }
-        if (this.currentPlayerIdx < this.playerList.length - 1) {
-          this.currentPlayerIdx += 1;
-          this.currentBet = 0;
-          this.message = '';
-        } else {
-          this.gameState = 'reveal';
-          this.message = '';
-        }
-        saveGameState();
-        this.syncToServer();
-        return true;
-      }
-
-      makeClaim(claimValue) {
-        this.claim = claimValue;
-        this.gameState = 'reveal';
-        saveGameState();
-        this.syncToServer();
-      }
-
-      resolveRound() {
-        const claimIsTrue = Math.random() > 0.5;
-        this.isCorrect = claimIsTrue;
-        this.revealed = true;
-        this.playerList = this.playerList.map((p) => {
-          let winnings = 0;
-          const bet = this.bets[p.id] || 0;
-          const oddsValue = parseFloat(this.odds[p.id]) || 1;
-          if (bet > 0) {
-            if (claimIsTrue) {
-              winnings = Math.round(bet * oddsValue);
-            } else {
-              winnings = -bet;
-            }
-          }
-          return {
-            ...p,
-            bankroll: Math.max(p.bankroll + winnings, 0),
-            status: p.bankroll + winnings <= 0 ? 'broke' : 'active'
-          };
-        });
-        this.players = {};
-        this.playerList.forEach(p => this.players[p.id] = p);
-        this.message = claimIsTrue ? `主張は正しかった！正解した人たちが勝利🎉` : `主張はウソだった！ウソを見破られました🔄`;
-        saveGameState();
-        this.syncToServer();
-      }
-
-      nextRound() {
-        const activePlayers = this.playerList.filter((p) => p.status === 'active');
-        if (activePlayers.length < 2) {
-          this.message = 'ゲーム終了！';
-          return false;
-        }
-        this.round += 1;
-        this.currentPlayerIdx = (this.round - 1) % this.playerList.length;
+        this.gameState = 'speaking';
+        this.currentSpeakerIdx = 0;
+        this.speakerClaim = null;
         this.bets = {};
         this.revealed = false;
-        this.isCorrect = null;
-        this.claim = '';
-        this.currentBet = 0;
-        this.odds = {};
-        this.gameState = 'betting';
-        this.message = '新しいラウンドが始まります！';
+        this.message = '';
         saveGameState();
-        this.syncToServer();
+      }
+
+      setSpeakerClaim(isTruth) {
+        this.speakerClaim = isTruth;
+        this.gameState = 'talking';
+        this.message = '';
+        saveGameState();
+      }
+
+      setBet(amount) {
+        if (amount > MAX_BET || amount < 1) return false;
+        this.bets[this.playerId] = amount;
+        this.currentBetAmount = amount;
+        saveGameState();
         return true;
       }
 
-      addPlayer(name) {
-        if (this.playerList.length >= MAX_PLAYERS) return false;
-        const newId = Math.random().toString(36).substring(7);
-        this.players[newId] = {
-          id: newId,
-          name: name,
-          bankroll: INITIAL_BANKROLL,
-          status: 'active'
-        };
-        this.playerList = Object.values(this.players);
-        saveGameState();
-        this.syncToServer();
-        return true;
-      }
-
-      async syncToServer() {
-        if (!this.roomCode) return;
-        try {
-          await fetch(`/api/rooms/${this.roomCode}/update`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              gameState: this.gameState,
-              players: this.players,
-              round: this.round,
-              currentPlayerIdx: this.currentPlayerIdx,
-              bets: this.bets,
-              claim: this.claim,
-              revealed: this.revealed,
-              isCorrect: this.isCorrect,
-              odds: this.odds,
-              message: this.message
-            })
-          });
-        } catch (e) {
-          console.error('Server sync failed:', e);
+      nextBetter() {
+        const bettingPlayers = this.playerList.filter(p => p.id !== this.playerList[this.currentSpeakerIdx].id);
+        const playersThatBet = bettingPlayers.filter(p => this.bets[p.id]);
+        
+        if (playersThatBet.length >= bettingPlayers.length) {
+          this.gameState = 'revealing';
         }
+        saveGameState();
+        return true;
+      }
+
+      revealResult() {
+        // ランダムに本当/嘘を決定
+        const isActuallyTruth = Math.random() > 0.5;
+        this.revealed = true;
+        
+        const currentSpeaker = this.playerList[this.currentSpeakerIdx];
+        const isSpeakerCorrect = this.speakerClaim === isActuallyTruth;
+        
+        // オッズ計算
+        const totalBet = Object.values(this.bets).reduce((a, b) => a + b, 0);
+        const odds = {};
+        Object.keys(this.bets).forEach(playerId => {
+          const bet = this.bets[playerId];
+          if (bet > 0) {
+            odds[playerId] = Math.max(1.2, (totalBet / bet) * 0.5);
+          }
+        });
+        
+        // 配当計算
+        this.playerList.forEach((p) => {
+          if (p.id === currentSpeaker.id) {
+            if (isSpeakerCorrect) {
+              p.earnings += 50; // 話し手が正解で50ポイント
+              p.bankroll += 50;
+            } else {
+              p.earnings -= 30; // 話し手が不正解で-30ポイント
+              p.bankroll = Math.max(p.bankroll - 30, 0);
+            }
+          } else {
+            const bet = this.bets[p.id] || 0;
+            if (bet > 0) {
+              // 正解判定：話し手の主張と実際の結果が一致したか
+              const guessedCorrectly = (this.speakerClaim === isActuallyTruth);
+              if (guessedCorrectly) {
+                const payout = Math.round(bet * odds[p.id]);
+                p.earnings += payout;
+                p.bankroll += payout;
+              } else {
+                p.earnings -= bet;
+                p.bankroll = Math.max(p.bankroll - bet, 0);
+              }
+            }
+          }
+        });
+        
+        this.message = isActuallyTruth ? '本当でした！' : 'ウソでした！';
+        this.odds = odds;
+        saveGameState();
+      }
+
+      nextSpeaker() {
+        this.currentSpeakerIdx = (this.currentSpeakerIdx + 1) % this.playerList.length;
+        
+        // 全員が話し手になったらゲーム終了
+        if (this.currentSpeakerIdx === 0) {
+          this.gameState = 'gameover';
+          return false;
+        }
+        
+        this.speakerClaim = null;
+        this.bets = {};
+        this.revealed = false;
+        this.message = '';
+        this.gameState = 'speaking';
+        saveGameState();
+        return true;
       }
     }
 
@@ -284,7 +231,6 @@
         const data = await response.json();
         return data.roomCode;
       } catch (e) {
-        console.error('Failed to create room:', e);
         return null;
       }
     }
@@ -294,8 +240,31 @@
         const response = await fetch(`/api/rooms/${roomCode}`);
         return response.ok;
       } catch (e) {
-        console.error('Failed to verify room:', e);
         return false;
+      }
+    }
+
+    async function loadRoomState(roomCode) {
+      try {
+        const response = await fetch(`/api/rooms/${roomCode}/state`);
+        if (!response.ok) return null;
+        return await response.json();
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function joinRoomAsPlayer(roomCode, playerName) {
+      try {
+        const response = await fetch(`/api/rooms/${roomCode}/join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ playerName })
+        });
+        if (!response.ok) throw new Error('Failed to join');
+        return await response.json();
+      } catch (e) {
+        return null;
       }
     }
 
@@ -304,7 +273,6 @@
       if (savedState) {
         try {
           game = Object.assign(new GameState(''), JSON.parse(savedState));
-          gameRooms[game.roomCode] = game;
           return true;
         } catch (e) {
           localStorage.removeItem('doubt_gameState');
@@ -324,6 +292,14 @@
         renderLobby(root);
       } else if (game.gameState === 'waiting') {
         renderWaiting(root);
+      } else if (game.gameState === 'speaking') {
+        renderSpeaking(root);
+      } else if (game.gameState === 'talking') {
+        renderTalking(root);
+      } else if (game.gameState === 'revealing') {
+        renderBetting(root);
+      } else if (game.gameState === 'gameover') {
+        renderGameOver(root);
       } else {
         renderGame(root);
       }
@@ -333,25 +309,24 @@
       const div = document.createElement('div');
       div.style.cssText = 'padding:2rem;max-width:700px;margin:0 auto;';
       div.innerHTML = `
-        <h1 style="font-size:36px;font-weight:700;margin-bottom:0.5rem;text-align:center;">🎲 ダウトゲーム</h1>
-        <p style="text-align:center;margin-bottom:2rem;color:#666;font-size:14px;">競馬風のオッズシステムを搭載したベッティングゲーム</p>
+        <h1 style="font-size:36px;font-weight:700;margin-bottom:2rem;text-align:center;">🎲 ダウトゲーム</h1>
         
         <div style="margin-bottom:2rem;padding:1.5rem;background:#e8f4f8;border-radius:12px;border-left:4px solid #2a78d6;">
           <h2 style="font-size:16px;font-weight:600;margin-bottom:1rem;color:#1f5cab;">📋 ゲームルール</h2>
           <ul style="margin:0;padding-left:1.5rem;color:#333;font-size:13px;line-height:1.8;">
-            <li style="margin-bottom:0.5rem;"><strong>基本:</strong> 各ラウンド、主張が「本当」か「ウソ」かを予想して賭ける</li>
-            <li style="margin-bottom:0.5rem;"><strong>初期資金:</strong> 全プレイヤーが $100 から開始</li>
-            <li style="margin-bottom:0.5rem;"><strong>ベッティング:</strong> 順番に $1～$100 の間で自由に賭ける</li>
-            <li style="margin-bottom:0.5rem;"><strong>オッズ:</strong> 少ない投票額ほど高オッズ（競馬方式）</li>
-            <li style="margin-bottom:0.5rem;"><strong>配当:</strong> 正解 = ベット額 × オッズ、不正解 = ベット失失</li>
-            <li style="margin-bottom:0.5rem;"><strong>終了条件:</strong> アクティブプレイヤーが2人以下になるまで継続</li>
+            <li style="margin-bottom:0.5rem;"><strong>ゲーム形式:</strong> 全員が一度ずつ話し手になる（一巡で終了）</li>
+            <li style="margin-bottom:0.5rem;"><strong>話し手の役割:</strong> 「本当」or「嘘」を設定 → トーク → 結果発表</li>
+            <li style="margin-bottom:0.5rem;"><strong>参加者の役割:</strong> 話し手の主張が本当か嘘か予想して賭ける</li>
+            <li style="margin-bottom:0.5rem;"><strong>賭け金:</strong> $1～$100 の間で自由に賭ける</li>
+            <li style="margin-bottom:0.5rem;"><strong>配当:</strong> 正解 = ベット額 × 0.5、不正解 = ベット失失</li>
+            <li style="margin-bottom:0.5rem;"><strong>初期資金:</strong> 全プレイヤー $100 から開始</li>
             <li><strong>人数:</strong> 2～8人でプレイ可能</li>
           </ul>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:2rem;">
-          <button id="createRoomBtn" style="padding:14px 24px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:pointer;">🆕 新規作成</button>
-          <button id="joinRoomBtn" style="padding:14px 24px;font-size:16px;font-weight:600;background:#28a745;color:white;border:none;border-radius:8px;cursor:pointer;">📌 ルームに参加</button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+          <button id="createRoomBtn" style="padding:14px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:pointer;">🆕 新規作成</button>
+          <button id="joinRoomBtn" style="padding:14px;font-size:16px;font-weight:600;background:#28a745;color:white;border:none;border-radius:8px;cursor:pointer;">📌 ルームに参加</button>
         </div>
       `;
       root.appendChild(div);
@@ -361,7 +336,6 @@
         if (roomCode) {
           game = new GameState(roomCode);
           game.isHost = true;
-          game.hostId = null; // ロビー画面ではまだホストIDがない
           saveGameState();
           render();
         } else {
@@ -370,7 +344,7 @@
       });
       
       document.getElementById('joinRoomBtn').addEventListener('click', async () => {
-        const roomCode = prompt('ルームコードを入力してください (例: ABC123):').toUpperCase().trim();
+        const roomCode = prompt('ルームコードを入力してください:')?.toUpperCase().trim();
         if (!roomCode) return;
         
         const exists = await verifyRoom(roomCode);
@@ -379,18 +353,15 @@
           return;
         }
         
-        // プレイヤー名を入力
-        const playerName = prompt('プレイヤー名を入力してください:').trim();
+        const playerName = prompt('プレイヤー名を入力してください:')?.trim();
         if (!playerName) return;
         
-        // サーバーにプレイヤーを追加
         const result = await joinRoomAsPlayer(roomCode, playerName);
         if (!result) {
-          alert('ルームに参加できませんでした。ゲームが開始している可能性があります。');
+          alert('ルームに参加できませんでした');
           return;
         }
         
-        // ゲーム状態を読み込む
         const roomState = await loadRoomState(roomCode);
         if (!roomState) {
           alert('ルーム状態の読み込みに失敗しました');
@@ -406,10 +377,6 @@
         game.isHost = result.isHost;
         game.hostId = result.hostId;
         
-        localStorage.setItem('doubt_playerId', game.playerId);
-        localStorage.setItem('doubt_playerName', playerName);
-        localStorage.setItem('doubt_roomCode', roomCode);
-        
         saveGameState();
         render();
       });
@@ -419,22 +386,8 @@
       const div = document.createElement('div');
       div.style.cssText = 'padding:2rem;max-width:700px;margin:0 auto;';
       div.innerHTML = `
-        <h1 style="font-size:36px;font-weight:700;margin-bottom:0.5rem;text-align:center;">🎲 ダウトゲーム</h1>
-        <p style="text-align:center;margin-bottom:2rem;color:#666;font-size:14px;">競馬風のオッズシステムを搭載したベッティングゲーム</p>
+        <h1 style="font-size:36px;font-weight:700;margin-bottom:2rem;text-align:center;">🎲 ダウトゲーム</h1>
         
-        <div style="margin-bottom:2rem;padding:1.5rem;background:#e8f4f8;border-radius:12px;border-left:4px solid #2a78d6;">
-          <h2 style="font-size:16px;font-weight:600;margin-bottom:1rem;color:#1f5cab;">📋 ゲームルール</h2>
-          <ul style="margin:0;padding-left:1.5rem;color:#333;font-size:13px;line-height:1.8;">
-            <li style="margin-bottom:0.5rem;"><strong>基本:</strong> 各ラウンド、主張が「本当」か「ウソ」かを予想して賭ける</li>
-            <li style="margin-bottom:0.5rem;"><strong>初期資金:</strong> 全プレイヤーが $100 から開始</li>
-            <li style="margin-bottom:0.5rem;"><strong>ベッティング:</strong> 順番に $1～$100 の間で自由に賭ける</li>
-            <li style="margin-bottom:0.5rem;"><strong>オッズ:</strong> 少ない投票額ほど高オッズ（競馬方式）</li>
-            <li style="margin-bottom:0.5rem;"><strong>配当:</strong> 正解 = ベット額 × オッズ、不正解 = ベット失失</li>
-            <li style="margin-bottom:0.5rem;"><strong>終了条件:</strong> アクティブプレイヤーが2人以下になるまで継続</li>
-            <li><strong>人数:</strong> 2～8人でプレイ可能</li>
-          </ul>
-        </div>
-
         <div style="margin-bottom:2rem;padding:1.5rem;background:#fff;border:1px solid #e0e0e0;border-radius:12px;">
           <h3 style="font-size:14px;font-weight:600;margin-bottom:1rem;color:#666;">👤 プレイヤー名を入力</h3>
           <input type="text" id="playerNameInput" placeholder="あなたの名前" maxlength="20" style="width:100%;padding:12px;margin-bottom:1rem;font-size:16px;border-radius:8px;border:1px solid #ddd;"/>
@@ -456,7 +409,6 @@
         }
         game.joinGame(name);
         
-        // サーバーに参加情報を送信してホスト判定を受け取る
         const result = await joinRoomAsPlayer(game.roomCode, name);
         if (result) {
           game.playerId = result.playerId;
@@ -464,39 +416,9 @@
           game.hostId = result.hostId;
         }
         
-        gameRooms[game.roomCode] = game;
         saveGameState();
         render();
       });
-    }
-
-    async function loadRoomState(roomCode) {
-      try {
-        const response = await fetch(`/api/rooms/${roomCode}/state`);
-        if (!response.ok) return null;
-        return await response.json();
-      } catch (e) {
-        console.error('Failed to load room state:', e);
-        return null;
-      }
-    }
-
-    async function joinRoomAsPlayer(roomCode, playerName) {
-      try {
-        const response = await fetch(`/api/rooms/${roomCode}/join`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ playerName })
-        });
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error);
-        }
-        return await response.json();
-      } catch (e) {
-        console.error('Failed to join room:', e);
-        return null;
-      }
     }
 
     function renderWaiting(root) {
@@ -516,33 +438,24 @@
         <div style="margin-bottom:2rem;padding:1.5rem;background:#fff;border:1px solid #e0e0e0;border-radius:12px;">
           <h3 style="font-size:14px;font-weight:600;margin-bottom:1rem;color:#666;">参加プレイヤー (${Object.keys(game.players).length}/${MAX_PLAYERS})</h3>
           <div style="display:grid;gap:8px;">
-      `;
-      
-      Object.values(game.players).forEach((p) => {
-        const isYou = p.id === game.playerId;
-        div.innerHTML += `
-          <div style="padding:12px;background:${isYou ? '#e3f2fd' : '#f8f8f7'};border-radius:8px;border:${isYou ? '2px solid #2a78d6' : '1px solid #e0e0e0'};">
-            <span style="font-weight:${isYou ? '600' : '400'};color:${isYou ? '#1f5cab' : '#333'};">${p.name}${isYou ? ' (あなた)' : ''}</span>
+            ${Object.values(game.players).map(p => `
+              <div style="padding:12px;background:${p.id === game.playerId ? '#e3f2fd' : '#f8f8f7'};border-radius:8px;border:${p.id === game.playerId ? '2px solid #2a78d6' : '1px solid #e0e0e0'};">
+                <span style="font-weight:${p.id === game.playerId ? '600' : '400'};color:${p.id === game.playerId ? '#1f5cab' : '#333'};">${p.name}${p.id === game.playerId ? ' (あなた)' : ''}</span>
+              </div>
+            `).join('')}
           </div>
-        `;
-      });
-      
-      div.innerHTML += `
-          </div>
-          <p style="color:#999;font-size:12px;margin-top:12px;text-align:center;">💡 他のプレイヤーがルームコードを入力すると自動で参加します</p>
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-          <button id="startGameBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:${game.isHost ? '#2a78d6' : '#ccc'};color:white;border:none;border-radius:8px;cursor:${game.isHost && Object.keys(game.players).length >= 2 ? 'pointer' : 'not-allowed'};opacity:${game.isHost && Object.keys(game.players).length >= 2 ? 1 : 0.5};" ${!game.isHost || Object.keys(game.players).length < 2 ? 'disabled' : ''}>ゲーム開始 →</button>
-          <button id="leaveRoomBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#dc3545;color:white;border:none;border-radius:8px;cursor:pointer;">退出</button>
+          <button id="startGameBtn" style="padding:14px;font-size:16px;font-weight:600;background:${game.isHost && Object.keys(game.players).length >= 2 ? '#2a78d6' : '#ccc'};color:white;border:none;border-radius:8px;cursor:${game.isHost && Object.keys(game.players).length >= 2 ? 'pointer' : 'not-allowed'};opacity:${game.isHost && Object.keys(game.players).length >= 2 ? 1 : 0.5};" ${!game.isHost || Object.keys(game.players).length < 2 ? 'disabled' : ''}>ゲーム開始 →</button>
+          <button id="leaveRoomBtn" style="padding:14px;font-size:16px;font-weight:600;background:#dc3545;color:white;border:none;border-radius:8px;cursor:pointer;">退出</button>
         </div>
         ${!game.isHost ? `<p style="text-align:center;color:#999;font-size:12px;margin-top:1rem;">💡 ホストがゲーム開始を待っています</p>` : ''}
       `;
-      
       root.appendChild(div);
       
       document.getElementById('startGameBtn').addEventListener('click', () => {
-        if (game.isHost && Object.keys(game.players).length >= 2) {
+        if (game.isHost) {
           game.startGame();
           render();
         }
@@ -555,164 +468,293 @@
           render();
         }
       });
-      
-      // 定期的に状態をサーバーから更新
-      const updateInterval = setInterval(async () => {
-        if (!game || game.gameState !== 'waiting') {
-          clearInterval(updateInterval);
-          return;
-        }
-        
-        const roomState = await loadRoomState(game.roomCode);
-        if (roomState) {
-          game.players = roomState.players;
-          game.playerList = Object.values(roomState.players);
-          render();
-        }
-      }, 1000);
     }
 
-    function renderGame(root) {
+    function renderSpeaking(root) {
       const div = document.createElement('div');
-      div.style.cssText = 'padding:2rem;max-width:900px;margin:0 auto;';
+      div.style.cssText = 'padding:2rem;max-width:600px;margin:0 auto;';
       
-      const currentPlayer = game.playerList[game.currentPlayerIdx];
-      const activePlayers = game.playerList.filter((p) => p.status === 'active');
-      const totalBet = Object.values(game.bets).reduce((a, b) => a + b, 0);
-      const isYourTurn = game.playerId === currentPlayer.id;
-      const myPlayer = game.players[game.playerId];
+      const currentSpeaker = game.playerList[game.currentSpeakerIdx];
+      const isYourTurn = game.playerId === currentSpeaker.id;
       
-      let html = `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem;border-bottom:1px solid #e0e0e0;padding-bottom:1rem;">
-          <div>
-            <h1 style="font-size:24px;font-weight:600;margin:0;">🎲 ラウンド ${game.round}</h1>
-            <p style="color:#666;margin:4px 0 0 0;font-size:14px;">${activePlayers.length} / ${game.playerList.length} プレイヤー</p>
-          </div>
-          <div style="text-align:right;">
-            <div style="background:#fff3cd;padding:12px 16px;border-radius:8px;margin-bottom:8px;">
-              <p style="color:#666;margin:0 0 4px 0;font-size:12px;">賭け総額</p>
-              <p style="font-size:20px;font-weight:600;margin:0;">$${totalBet}</p>
-            </div>
-            <div style="background:#${myPlayer.status === 'active' ? 'e3f2fd' : 'f8f8f7'};padding:12px 16px;border-radius:8px;">
-              <p style="color:#666;margin:0 0 4px 0;font-size:12px;">あなたの残高</p>
-              <p style="font-size:20px;font-weight:600;margin:0;">$${myPlayer.bankroll}</p>
-            </div>
+      div.innerHTML = `
+        <h1 style="font-size:28px;font-weight:600;margin-bottom:2rem;text-align:center;">🎤 話し手設定</h1>
+        
+        <div style="padding:1.5rem;background:#e8f4f8;border-radius:12px;margin-bottom:2rem;">
+          <p style="font-size:16px;font-weight:600;text-align:center;color:#1f5cab;margin:0;">
+            ${isYourTurn ? 'あなたが話し手です！' : `${currentSpeaker.name} が話し手です`}
+          </p>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr;gap:1rem;margin-bottom:2rem;">
+          ${isYourTurn ? `
+            <button id="claimTrueBtn" style="padding:20px;font-size:18px;font-weight:600;background:#d4edda;color:#155724;border:2px solid #28a745;border-radius:8px;cursor:pointer;">✓ 本当の話をします</button>
+            <button id="claimFalseBtn" style="padding:20px;font-size:18px;font-weight:600;background:#f8d7da;color:#721c24;border:2px solid #dc3545;border-radius:8px;cursor:pointer;">✕ ウソの話をします</button>
+          ` : `
+            <p style="text-align:center;color:#999;">他のプレイヤーの選択をお待ちください...</p>
+          `}
+        </div>
+      `;
+      root.appendChild(div);
+      
+      if (isYourTurn) {
+        document.getElementById('claimTrueBtn').addEventListener('click', () => {
+          game.setSpeakerClaim(true);
+          render();
+        });
+        
+        document.getElementById('claimFalseBtn').addEventListener('click', () => {
+          game.setSpeakerClaim(false);
+          render();
+        });
+      }
+    }
+
+    function renderTalking(root) {
+      const div = document.createElement('div');
+      div.style.cssText = 'padding:2rem;max-width:600px;margin:0 auto;';
+      
+      const currentSpeaker = game.playerList[game.currentSpeakerIdx];
+      const isYourTurn = game.playerId === currentSpeaker.id;
+      
+      div.innerHTML = `
+        <h1 style="font-size:28px;font-weight:600;margin-bottom:2rem;text-align:center;">🎤 トーク中</h1>
+        
+        <div style="padding:1.5rem;background:#e8f4f8;border-radius:12px;margin-bottom:2rem;">
+          <p style="font-size:14px;color:#999;margin:0 0 0.5rem 0;">話し手</p>
+          <p style="font-size:20px;font-weight:600;text-align:center;color:#1f5cab;margin:0;">
+            ${currentSpeaker.name}
+          </p>
+          <p style="font-size:12px;color:#999;margin:0.5rem 0 0 0;text-align:center;">
+            ${game.speakerClaim ? '✓ 本当の話' : '✕ ウソの話'}
+          </p>
+        </div>
+
+        <div style="padding:1.5rem;background:#fff;border:1px solid #e0e0e0;border-radius:12px;margin-bottom:2rem;">
+          <p style="color:#666;font-size:14px;line-height:1.8;">
+            ${isYourTurn ? 
+              'あなたの話を聞かせてください。他のプレイヤーが本当か嘘か当てようとします。準備ができたら下のボタンを押してください。' :
+              `${currentSpeaker.name}がトークを開始するのを待っています...`
+            }
+          </p>
+        </div>
+
+        ${isYourTurn ? `
+          <button id="finishTalkBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:pointer;">トーク終了 → 参加者がBET</button>
+        ` : `
+          <p style="text-align:center;color:#999;font-size:12px;">他のプレイヤーのトークが終わるのをお待ちください...</p>
+        `}
+      `;
+      root.appendChild(div);
+      
+      if (isYourTurn) {
+        document.getElementById('finishTalkBtn').addEventListener('click', () => {
+          game.gameState = 'revealing';
+          render();
+        });
+      }
+    }
+
+    function renderBetting(root) {
+      const div = document.createElement('div');
+      div.style.cssText = 'padding:2rem;max-width:600px;margin:0 auto;';
+      
+      const currentSpeaker = game.playerList[game.currentSpeakerIdx];
+      const isYourTurn = game.playerId === currentSpeaker.id;
+      const playerNotBet = game.playerList.filter(p => p.id !== currentSpeaker.id && !game.bets[p.id]);
+      
+      div.innerHTML = `
+        <h1 style="font-size:28px;font-weight:600;margin-bottom:2rem;text-align:center;">💰 ベッティング</h1>
+        
+        <div style="padding:1.5rem;background:#e8f4f8;border-radius:12px;margin-bottom:2rem;">
+          <p style="font-size:14px;color:#999;margin:0 0 0.5rem 0;">話し手</p>
+          <p style="font-size:20px;font-weight:600;text-align:center;color:#1f5cab;margin:0;">
+            ${currentSpeaker.name}
+          </p>
+        </div>
+
+        <div style="padding:1.5rem;background:#fff;border:1px solid #e0e0e0;border-radius:12px;margin-bottom:2rem;">
+          <h3 style="font-size:14px;font-weight:600;margin-bottom:1rem;color:#666;">現在のベット状況</h3>
+          <div style="display:grid;gap:8px;">
+            ${game.playerList.map(p => {
+              if (p.id === currentSpeaker.id) return '';
+              const hasBet = game.bets[p.id];
+              return `
+                <div style="padding:8px;background:${hasBet ? '#d4edda' : '#f8f8f7'};border-radius:6px;">
+                  <span style="color:#999;font-size:12px;">${p.name}</span><br/>
+                  <span style="font-weight:600;color:${hasBet ? '#28a745' : '#999'};">
+                    ${hasBet ? `BET: $${game.bets[p.id]}` : '未ベット'}
+                  </span>
+                </div>
+              `;
+            }).join('')}
           </div>
         </div>
 
-        <div style="margin-bottom:2rem;">
-          <h2 style="font-size:13px;color:#999;margin-bottom:12px;font-weight:600;text-transform:uppercase;">プレイヤー</h2>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:12px;">
+        ${isYourTurn ? `
+          <p style="text-align:center;color:#999;font-size:12px;">他のプレイヤーがベットするのをお待ちください...</p>
+        ` : playerNotBet.length > 0 ? `
+          <div style="margin-bottom:2rem;">
+            <p style="color:#1f5cab;margin:0 0 1rem 0;font-size:14px;">残高: $${game.players[game.playerId].bankroll}</p>
+            <input type="number" id="betInput" min="1" max="${game.players[game.playerId].bankroll}" placeholder="ベット額" style="width:100%;padding:10px;margin-bottom:1rem;font-size:16px;border-radius:6px;border:1px solid #ddd;"/>
+            <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:1rem;">
+              ${[10, 25, 50, 100].map(amt => `
+                <button class="quick-bet" data-amount="${amt}" style="padding:8px;font-size:12px;font-weight:600;background:white;border:1px solid #2a78d6;color:#2a78d6;border-radius:6px;cursor:pointer;opacity:${amt > game.players[game.playerId].bankroll ? 0.5 : 1};" ${amt > game.players[game.playerId].bankroll ? 'disabled' : ''}>$${amt}</button>
+              `).join('')}
+            </div>
+            <button id="submitBetBtn" style="width:100%;padding:12px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:6px;cursor:pointer;">ベット確定</button>
+          </div>
+        ` : `
+          <p style="text-align:center;color:#999;font-size:12px;">全員のベットが完了しました。結果を発表します...</p>
+          <button id="revealBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#ffc107;color:#000;border:none;border-radius:8px;cursor:pointer;margin-top:1rem;">🎬 結果を発表</button>
+        `}
       `;
-      
-      game.playerList.forEach((p) => {
-        const isCurrentPlayer = p.id === currentPlayer.id;
-        const isYouPlayer = p.id === game.playerId;
-        html += `<div style="padding:14px;background:${isCurrentPlayer ? '#e3f2fd' : '#fff'};border:${isCurrentPlayer ? '2px solid #2a78d6' : isYouPlayer ? '2px solid #ffc107' : '1px solid #e0e0e0'};border-radius:8px;opacity:${p.status === 'broke' ? 0.5 : 1};box-shadow:${isCurrentPlayer ? '0 2px 8px rgba(42, 120, 214, 0.2)' : isYouPlayer ? '0 2px 8px rgba(255, 193, 7, 0.2)' : 'none'};"><p style="margin:0 0 6px 0;font-size:12px;color:#999;">${p.name}${isYouPlayer ? ' (あなた)' : ''}${isCurrentPlayer ? ' (ターン中)' : ''}</p><p style="margin:0;font-size:18px;font-weight:600;">$${p.bankroll}</p>${game.bets[p.id] ? `<p style="margin:6px 0 0 0;font-size:12px;color:#d9534f;font-weight:500;">BET: $${game.bets[p.id]}</p>` : ''}${p.status === 'broke' ? `<p style="margin:6px 0 0 0;font-size:11px;color:#999;">💔 破産</p>` : ''}</div>`;
-      });
-      
-      html += `</div></div>`;
-      
-      if (Object.keys(game.odds).length > 0) {
-        html += `<div style="margin-bottom:2rem;padding:16px;background:#fff;border:1px solid #e0e0e0;border-radius:8px;"><h2 style="font-size:13px;color:#999;margin:0 0 12px 0;font-weight:600;text-transform:uppercase;">🏇 現在のオッズ</h2><div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:12px;">`;
-        game.playerList.forEach((p) => {
-          html += `<div style="font-size:13px;padding:8px;background:#f8f8f7;border-radius:6px;"><span style="color:#999;">${p.name}</span><br/><span style="font-size:16px;font-weight:600;color:${game.odds[p.id] !== '-' ? '#d9534f' : '#999'};">${game.odds[p.id] !== '-' ? game.odds[p.id] + 'x' : '未ベット'}</span></div>`;
-        });
-        html += `</div></div>`;
-      }
-      
-      if (game.gameState === 'betting') {
-        html += `<div style="margin-bottom:2rem;padding:20px;background:${isYourTurn ? '#e3f2fd' : '#f8f8f7'};border-radius:8px;border:${isYourTurn ? '2px solid #2a78d6' : '1px solid #e0e0e0'};"><h2 style="margin:0 0 12px 0;font-size:18px;font-weight:600;color:${isYourTurn ? '#1f5cab' : '#999'};">💰 ${currentPlayer.name}${isYourTurn ? ' (あなたのターン)' : ''}</h2>`;
-        
-        if (isYourTurn) {
-          html += `<p style="color:#1f5cab;margin:0 0 16px 0;font-size:14px;">残高: $${currentPlayer.bankroll}</p><input type="number" min="1" max="${currentPlayer.bankroll}" value="${game.currentBet || ''}" id="betInput" placeholder="ベット額を入力" style="width:100%;padding:10px;margin-bottom:12px;font-size:16px;border-radius:6px;border:1px solid #90caf9;"/><div style="display:grid;grid-template-columns:repeat(5, 1fr);gap:8px;margin-bottom:16px;">`;
-          [10, 25, 50, 75, 100].forEach((amt) => {
-            html += `<button class="bet-btn" data-amount="${amt}" style="padding:10px;font-size:13px;font-weight:600;background:white;border:1px solid #2a78d6;color:#2a78d6;border-radius:6px;cursor:pointer;opacity:${amt > currentPlayer.bankroll ? 0.5 : 1};" ${amt > currentPlayer.bankroll ? 'disabled' : ''}>$${amt}</button>`;
-          });
-          html += `</div><button id="nextPlayerBtn" style="width:100%;padding:12px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:6px;cursor:${game.currentBet ? 'pointer' : 'not-allowed'};opacity:${game.currentBet ? 1 : 0.5};">ベット確定 →</button>`;
-        } else {
-          html += `<p style="color:#999;margin:0;font-size:14px;">他のプレイヤーのターンです。しばらくお待ちください...</p>`;
-        }
-        
-        html += `</div>`;
-      }
-      
-      if (game.gameState === 'reveal' && !game.revealed) {
-        html += `<div style="margin-bottom:2rem;padding:20px;background:#fff;border:2px solid #ffc107;border-radius:8px;"><h2 style="margin:0 0 16px 0;font-size:18px;font-weight:600;">🎯 主張を選んでください</h2><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;"><button id="claimTrue" style="padding:18px;font-size:16px;font-weight:600;background:#d4edda;color:#155724;border:2px solid #28a745;border-radius:8px;cursor:pointer;">✓ 本当</button><button id="claimFalse" style="padding:18px;font-size:16px;font-weight:600;background:#f8d7da;color:#721c24;border:2px solid #dc3545;border-radius:8px;cursor:pointer;">✕ ウソ</button></div>${game.claim ? `<button id="revealBtn" style="width:100%;padding:12px;font-size:16px;font-weight:600;background:#ffc107;color:#000;border:none;border-radius:6px;cursor:pointer;">🎬 結果を発表</button>` : ''}</div>`;
-      }
-      
-      if (game.revealed) {
-        const bgColor = game.isCorrect ? '#d4edda' : '#f8d7da';
-        const borderColor = game.isCorrect ? '#28a745' : '#dc3545';
-        const textColor = game.isCorrect ? '#155724' : '#721c24';
-        html += `<div style="margin-bottom:2rem;padding:24px;background:${bgColor};border:3px solid ${borderColor};border-radius:8px;text-align:center;"><h2 style="margin:0 0 12px 0;font-size:24px;font-weight:600;color:${textColor};">${game.isCorrect ? '🎉 主張は正しかった！' : '🔄 主張はウソだった！'}</h2><p style="margin:0 0 20px 0;color:${textColor};font-size:15px;">${game.message}</p><div style="margin-bottom:16px;padding:12px;background:rgba(255,255,255,0.7);border-radius:6px;"><h3 style="margin:0 0 12px 0;font-size:13px;color:#666;text-transform:uppercase;">ラウンド結果</h3><div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(120px, 1fr));gap:8px;">`;
-        game.playerList.forEach((p) => {
-          const bet = game.bets[p.id] || 0;
-          const oddsValue = parseFloat(game.odds[p.id]) || 1;
-          let result = 0;
-          if (bet > 0) {
-            result = game.isCorrect ? Math.round(bet * oddsValue) : -bet;
-          }
-          html += `<div style="font-size:12px;padding:8px;background:${result > 0 ? '#c8e6c9' : result < 0 ? '#ffcdd2' : '#f5f5f5'};border-radius:6px;"><span style="color:#999;">${p.name}</span><br/><span style="font-size:14px;font-weight:600;color:${result > 0 ? '#2e7d32' : result < 0 ? '#c62828' : '#999'};">${result > 0 ? '+' : ''}${result}</span></div>`;
-        });
-        html += `</div></div><button id="nextRoundBtn" style="padding:12px 24px;font-size:16px;font-weight:600;background:${textColor};color:white;border:none;border-radius:6px;cursor:pointer;">次のラウンド →</button></div>`;
-      }
-      
-      if (game.message && !game.revealed) {
-        html += `<div style="padding:12px;background:#fff;border:1px solid #e0e0e0;border-radius:6px;text-align:center;"><p style="margin:0;color:#666;font-size:14px;">${game.message}</p></div>`;
-      }
-      
-      div.innerHTML = html;
       root.appendChild(div);
       
-      if (game.gameState === 'betting' && isYourTurn) {
-        document.getElementById('betInput').addEventListener('change', (e) => { game.currentBet = Number(e.target.value); });
-        document.querySelectorAll('.bet-btn').forEach((btn) => {
+      if (!isYourTurn && playerNotBet.length > 0) {
+        document.querySelectorAll('.quick-bet').forEach(btn => {
           btn.addEventListener('click', () => {
-            const amount = Number(btn.dataset.amount);
-            if (game.handleBet(amount)) render();
+            document.getElementById('betInput').value = btn.dataset.amount;
           });
         });
-        document.getElementById('nextPlayerBtn').addEventListener('click', () => {
-          if (game.nextPlayer()) render();
+        
+        document.getElementById('submitBetBtn').addEventListener('click', () => {
+          const amount = Number(document.getElementById('betInput').value);
+          if (game.setBet(amount)) {
+            render();
+          }
         });
       }
       
-      if (game.gameState === 'reveal' && !game.revealed) {
-        document.getElementById('claimTrue').addEventListener('click', () => { game.makeClaim('本当'); render(); });
-        document.getElementById('claimFalse').addEventListener('click', () => { game.makeClaim('ウソ'); render(); });
-        if (document.getElementById('revealBtn')) {
-          document.getElementById('revealBtn').addEventListener('click', () => { game.resolveRound(); render(); });
-        }
-      }
-      
-      if (game.revealed && document.getElementById('nextRoundBtn')) {
-        document.getElementById('nextRoundBtn').addEventListener('click', () => { if (game.nextRound()) render(); });
+      if (playerNotBet.length === 0) {
+        document.getElementById('revealBtn').addEventListener('click', () => {
+          game.revealResult();
+          game.gameState = 'result';
+          render();
+        });
       }
     }
 
-    // タブ切り替え時に自動保存
+    function renderResult(root) {
+      const div = document.createElement('div');
+      div.style.cssText = 'padding:2rem;max-width:600px;margin:0 auto;';
+      
+      const bgColor = game.revealed ? '#d4edda' : '#f8d7da';
+      const textColor = game.revealed ? '#155724' : '#721c24';
+      
+      div.innerHTML = `
+        <div style="padding:20px;background:${bgColor};border:3px solid ${textColor === '#155724' ? '#28a745' : '#dc3545'};border-radius:8px;text-align:center;margin-bottom:2rem;">
+          <h1 style="margin:0 0 12px 0;font-size:24px;font-weight:600;color:${textColor};">
+            ${game.message}
+          </h1>
+        </div>
+
+        <div style="padding:1.5rem;background:#fff;border:1px solid #e0e0e0;border-radius:12px;margin-bottom:2rem;">
+          <h3 style="font-size:14px;font-weight:600;margin-bottom:1rem;color:#666;">プレイヤー情報</h3>
+          <div style="display:grid;gap:8px;">
+            ${game.playerList.map(p => {
+              const bet = game.bets[p.id] || 0;
+              const oddValue = game.odds[p.id];
+              return `
+                <div style="padding:12px;background:#f8f8f7;border-radius:6px;">
+                  <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                    <span style="font-weight:600;">${p.name}</span>
+                    <span style="color:${p.earnings > 0 ? '#28a745' : p.earnings < 0 ? '#dc3545' : '#999'};font-weight:600;">
+                      ${p.earnings > 0 ? '+' : ''}${p.earnings}
+                    </span>
+                  </div>
+                  ${bet > 0 ? `
+                    <div style="font-size:12px;color:#999;">
+                      BET: $${bet} ${oddValue ? `× ${oddValue.toFixed(2)}` : ''}
+                    </div>
+                  ` : ''}
+                  <span style="font-size:12px;color:#999;">残高: $${p.bankroll}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <button id="nextBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:pointer;">次へ →</button>
+      `;
+      root.appendChild(div);
+      
+      document.getElementById('nextBtn').addEventListener('click', () => {
+        if (!game.nextSpeaker()) {
+          render();
+        } else {
+          render();
+        }
+      });
+    }
+
+    function renderGameOver(root) {
+      const div = document.createElement('div');
+      div.style.cssText = 'padding:2rem;max-width:600px;margin:0 auto;';
+      
+      const winner = [...game.playerList].sort((a, b) => b.bankroll - a.bankroll)[0];
+      
+      div.innerHTML = `
+        <h1 style="font-size:36px;font-weight:700;margin-bottom:2rem;text-align:center;">🎉 ゲーム終了</h1>
+        
+        <div style="padding:1.5rem;background:#fff3cd;border:3px solid #ffc107;border-radius:12px;text-align:center;margin-bottom:2rem;">
+          <p style="color:#999;margin:0 0 0.5rem 0;font-size:12px;">優勝者</p>
+          <p style="font-size:28px;font-weight:700;margin:0;color:#1f5cab;">👑 ${winner.name}</p>
+          <p style="color:#666;margin:0.5rem 0 0 0;font-size:14px;">最終資金: $${winner.bankroll}</p>
+        </div>
+
+        <div style="padding:1.5rem;background:#fff;border:1px solid #e0e0e0;border-radius:12px;margin-bottom:2rem;">
+          <h3 style="font-size:14px;font-weight:600;margin-bottom:1rem;color:#666;">最終ランキング</h3>
+          <div style="display:grid;gap:8px;">
+            ${[...game.playerList]
+              .sort((a, b) => b.bankroll - a.bankroll)
+              .map((p, idx) => `
+                <div style="padding:12px;background:#f8f8f7;border-radius:6px;">
+                  <div style="display:flex;justify-content:space-between;">
+                    <span style="font-weight:600;">
+                      ${idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : idx + 1 + '位'} 
+                      ${p.name}
+                    </span>
+                    <span style="color:${p.bankroll > INITIAL_BANKROLL ? '#28a745' : p.bankroll < INITIAL_BANKROLL ? '#dc3545' : '#999'};font-weight:600;">
+                      $${p.bankroll}
+                    </span>
+                  </div>
+                </div>
+              `).join('')}
+          </div>
+        </div>
+
+        <button id="returnBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:pointer;">ルームに戻る</button>
+      `;
+      root.appendChild(div);
+      
+      document.getElementById('returnBtn').addEventListener('click', () => {
+        game = null;
+        localStorage.removeItem('doubt_gameState');
+        render();
+      });
+    }
+
+    function renderGame(root) {
+      renderResult(root);
+    }
+
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         saveGameState();
       }
     });
 
-    // ページ離脱時に警告
     window.addEventListener('beforeunload', (e) => {
-      if (game && (game.gameState === 'betting' || game.gameState === 'reveal')) {
+      if (game && (game.gameState === 'speaking' || game.gameState === 'talking' || game.gameState === 'revealing')) {
         e.preventDefault();
         e.returnValue = 'ゲーム中です。本当にページを離れますか？';
       }
     });
 
-    // 初期化
     (async () => {
       await initIndexedDB();
-      const hasState = await loadGameState();
-      if (!hasState) {
-        game = null;
-      }
+      await loadGameState();
       render();
     })();
   </script>

@@ -3,17 +3,13 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// publicディレクトリの絶対パスを取得
 const publicPath = path.join(__dirname, 'public');
 
-// JSONボディパーサーの設定
 app.use(express.json());
-
-// 静的ファイルの配信
 app.use(express.static(publicPath));
 
-// ルーム状態を保存（メモリ内）
 const gameRooms = {};
+const INITIAL_BANKROLL = 100;
 
 // ルーム作成API
 app.post('/api/rooms/create', (req, res) => {
@@ -23,14 +19,8 @@ app.post('/api/rooms/create', (req, res) => {
     players: {},
     gameState: 'lobby',
     hostId: null,
-    round: 1,
-    currentPlayerIdx: 0,
-    bets: {},
-    claim: '',
-    revealed: false,
-    isCorrect: null,
-    odds: {},
-    message: '',
+    currentSpeakerIdx: 0,
+    speakers: [],
     createdAt: Date.now(),
     lastActivity: Date.now()
   };
@@ -46,7 +36,6 @@ app.get('/api/rooms/:roomCode', (req, res) => {
     return res.status(404).json({ error: 'Room not found' });
   }
   
-  // 30分以上非アクティブなルームは削除
   if (Date.now() - room.lastActivity > 30 * 60 * 1000) {
     delete gameRooms[roomCode];
     return res.status(404).json({ error: 'Room expired' });
@@ -72,22 +61,16 @@ app.get('/api/rooms/:roomCode/state', (req, res) => {
     roomCode: room.code,
     gameState: room.gameState,
     players: room.players,
-    round: room.round,
-    currentPlayerIdx: room.currentPlayerIdx,
-    bets: room.bets,
-    claim: room.claim,
-    revealed: room.revealed,
-    isCorrect: room.isCorrect,
-    odds: room.odds,
-    message: room.message,
-    hostId: room.hostId
+    hostId: room.hostId,
+    currentSpeakerIdx: room.currentSpeakerIdx,
+    speakers: room.speakers
   });
 });
 
 // ルーム状態更新API
 app.post('/api/rooms/:roomCode/update', (req, res) => {
   const { roomCode } = req.params;
-  const { gameState, players, round, currentPlayerIdx, bets, claim, revealed, isCorrect, odds, message } = req.body;
+  const { gameState, players, currentSpeakerIdx } = req.body;
   
   const room = gameRooms[roomCode];
   if (!room) {
@@ -96,14 +79,7 @@ app.post('/api/rooms/:roomCode/update', (req, res) => {
   
   room.gameState = gameState;
   room.players = players;
-  room.round = round;
-  room.currentPlayerIdx = currentPlayerIdx;
-  room.bets = bets;
-  room.claim = claim;
-  room.revealed = revealed;
-  room.isCorrect = isCorrect;
-  room.odds = odds;
-  room.message = message;
+  room.currentSpeakerIdx = currentSpeakerIdx;
   room.lastActivity = Date.now();
   
   res.json({ success: true });
@@ -125,7 +101,6 @@ app.post('/api/rooms/:roomCode/join', (req, res) => {
   
   const playerId = Math.random().toString(36).substring(7);
   
-  // 最初のプレイヤーをホストに設定
   if (!room.hostId) {
     room.hostId = playerId;
   }
@@ -133,8 +108,9 @@ app.post('/api/rooms/:roomCode/join', (req, res) => {
   room.players[playerId] = {
     id: playerId,
     name: playerName,
-    bankroll: 100,
-    status: 'active'
+    bankroll: INITIAL_BANKROLL,
+    status: 'active',
+    earnings: 0
   };
   
   room.lastActivity = Date.now();
@@ -147,17 +123,15 @@ app.post('/api/rooms/:roomCode/join', (req, res) => {
   });
 });
 
-// ルートにアクセスされたらindex.htmlを返す
+// ルートとキャッチオール
 app.get('/', (req, res) => {
   res.sendFile(path.join(publicPath, 'index.html'));
 });
 
-// 404エラー対応（その他のルートもindex.htmlを返す）
 app.get('*', (req, res) => {
   res.sendFile(path.join(publicPath, 'index.html'));
 });
 
-// サーバーのリッスン開始
 app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
