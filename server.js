@@ -50,10 +50,34 @@ app.get('/api/rooms/:roomCode', (req, res) => {
   });
 });
 
+// ルーム状態取得API
+app.get('/api/rooms/:roomCode/state', (req, res) => {
+  const { roomCode } = req.params;
+  const room = gameRooms[roomCode];
+  
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found' });
+  }
+  
+  res.json({
+    roomCode: room.code,
+    gameState: room.gameState,
+    players: room.players,
+    round: room.round,
+    currentPlayerIdx: room.currentPlayerIdx,
+    bets: room.bets,
+    claim: room.claim,
+    revealed: room.revealed,
+    isCorrect: room.isCorrect,
+    odds: room.odds,
+    message: room.message
+  });
+});
+
 // ルーム状態更新API
 app.post('/api/rooms/:roomCode/update', (req, res) => {
   const { roomCode } = req.params;
-  const { gameState, players } = req.body;
+  const { gameState, players, round, currentPlayerIdx, bets, claim, revealed, isCorrect, odds, message } = req.body;
   
   const room = gameRooms[roomCode];
   if (!room) {
@@ -62,9 +86,45 @@ app.post('/api/rooms/:roomCode/update', (req, res) => {
   
   room.gameState = gameState;
   room.players = players;
+  room.round = round;
+  room.currentPlayerIdx = currentPlayerIdx;
+  room.bets = bets;
+  room.claim = claim;
+  room.revealed = revealed;
+  room.isCorrect = isCorrect;
+  room.odds = odds;
+  room.message = message;
   room.lastActivity = Date.now();
   
   res.json({ success: true });
+});
+
+// プレイヤー参加API
+app.post('/api/rooms/:roomCode/join', (req, res) => {
+  const { roomCode } = req.params;
+  const { playerName } = req.body;
+  
+  const room = gameRooms[roomCode];
+  if (!room) {
+    return res.status(404).json({ error: 'Room not found' });
+  }
+  
+  if (room.gameState !== 'waiting') {
+    return res.status(400).json({ error: 'Game already started' });
+  }
+  
+  const playerId = Math.random().toString(36).substring(7);
+  room.players[playerId] = {
+    id: playerId,
+    name: playerName,
+    bankroll: 100,
+    status: 'active'
+  };
+  
+  res.json({
+    playerId,
+    players: room.players
+  });
 });
 
 // ルートにアクセスされたらindex.htmlを返す

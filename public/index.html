@@ -258,7 +258,15 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               gameState: this.gameState,
-              players: this.playerList
+              players: this.players,
+              round: this.round,
+              currentPlayerIdx: this.currentPlayerIdx,
+              bets: this.bets,
+              claim: this.claim,
+              revealed: this.revealed,
+              isCorrect: this.isCorrect,
+              odds: this.odds,
+              message: this.message
             })
           });
         } catch (e) {
@@ -369,11 +377,35 @@
           return;
         }
         
-        if (!gameRooms[roomCode]) {
-          game = new GameState(roomCode);
-        } else {
-          game = gameRooms[roomCode];
+        // プレイヤー名を入力
+        const playerName = prompt('プレイヤー名を入力してください:').trim();
+        if (!playerName) return;
+        
+        // サーバーにプレイヤーを追加
+        const result = await joinRoomAsPlayer(roomCode, playerName);
+        if (!result) {
+          alert('ルームに参加できませんでした。ゲームが開始している可能性があります。');
+          return;
         }
+        
+        // ゲーム状態を読み込む
+        const roomState = await loadRoomState(roomCode);
+        if (!roomState) {
+          alert('ルーム状態の読み込みに失敗しました');
+          return;
+        }
+        
+        game = new GameState(roomCode);
+        game.playerId = result.playerId;
+        game.playerName = playerName;
+        game.players = roomState.players;
+        game.playerList = Object.values(roomState.players);
+        game.gameState = 'waiting';
+        
+        localStorage.setItem('doubt_playerId', game.playerId);
+        localStorage.setItem('doubt_playerName', playerName);
+        localStorage.setItem('doubt_roomCode', roomCode);
+        
         saveGameState();
         render();
       });
@@ -424,6 +456,35 @@
       });
     }
 
+    async function loadRoomState(roomCode) {
+      try {
+        const response = await fetch(`/api/rooms/${roomCode}/state`);
+        if (!response.ok) return null;
+        return await response.json();
+      } catch (e) {
+        console.error('Failed to load room state:', e);
+        return null;
+      }
+    }
+
+    async function joinRoomAsPlayer(roomCode, playerName) {
+      try {
+        const response = await fetch(`/api/rooms/${roomCode}/join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ playerName })
+        });
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error);
+        }
+        return await response.json();
+      } catch (e) {
+        console.error('Failed to join room:', e);
+        return null;
+      }
+    }
+
     function renderWaiting(root) {
       const div = document.createElement('div');
       div.style.cssText = 'padding:2rem;max-width:600px;margin:0 auto;';
@@ -454,37 +515,16 @@
       
       div.innerHTML += `
           </div>
+          <p style="color:#999;font-size:12px;margin-top:12px;text-align:center;">💡 他のプレイヤーがルームコードを入力すると自動で参加します</p>
         </div>
 
-        <div style="margin-bottom:2rem;padding:1.5rem;background:#fff;border:1px solid #e0e0e0;border-radius:12px;">
-          <h3 style="font-size:14px;font-weight:600;margin-bottom:1rem;color:#666;">新しいプレイヤーを追加</h3>
-          <input type="text" id="newPlayerInput" placeholder="プレイヤー名" maxlength="20" style="width:100%;padding:10px;margin-bottom:1rem;font-size:14px;border-radius:6px;border:1px solid #ddd;"/>
-          <button id="addPlayerBtn" style="width:100%;padding:12px;font-size:14px;font-weight:600;background:#28a745;color:white;border:none;border-radius:6px;cursor:pointer;margin-bottom:1rem;" ${Object.keys(game.players).length >= MAX_PLAYERS ? 'disabled' : ''}>プレイヤーを追加</button>
-        </div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
           <button id="startGameBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#2a78d6;color:white;border:none;border-radius:8px;cursor:${Object.keys(game.players).length >= 2 ? 'pointer' : 'not-allowed'};opacity:${Object.keys(game.players).length >= 2 ? 1 : 0.5};">ゲーム開始 →</button>
           <button id="leaveRoomBtn" style="width:100%;padding:14px;font-size:16px;font-weight:600;background:#dc3545;color:white;border:none;border-radius:8px;cursor:pointer;">退出</button>
         </div>
       `;
       
       root.appendChild(div);
-      
-      const newPlayerInput = document.getElementById('newPlayerInput');
-      newPlayerInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') document.getElementById('addPlayerBtn').click();
-      });
-      
-      document.getElementById('addPlayerBtn').addEventListener('click', () => {
-        const name = newPlayerInput.value.trim();
-        if (!name) return;
-        if (game.addPlayer(name)) {
-          newPlayerInput.value = '';
-          render();
-        } else {
-          alert(`最大${MAX_PLAYERS}人までです`);
-        }
-      });
       
       document.getElementById('startGameBtn').addEventListener('click', () => {
         if (Object.keys(game.players).length >= 2) {
@@ -500,6 +540,21 @@
           render();
         }
       });
+      
+      // 定期的に状態をサーバーから更新
+      const updateInterval = setInterval(async () => {
+        if (!game || game.gameState !== 'waiting') {
+          clearInterval(updateInterval);
+          return;
+        }
+        
+        const roomState = await loadRoomState(game.roomCode);
+        if (roomState) {
+          game.players = roomState.players;
+          game.playerList = Object.values(roomState.players);
+          render();
+        }
+      }, 1000);
     }
 
     function renderGame(root) {
