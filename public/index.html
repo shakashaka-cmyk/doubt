@@ -311,10 +311,10 @@
           renderTalking(root);
         } else if (game.gameState === 'revealing') {
           renderBetting(root);
-        } else if (game.gameState === 'gameover') {
-          renderGameOver(root);
         } else if (game.gameState === 'result') {
           renderResult(root);
+        } else if (game.gameState === 'gameover') {
+          renderGameOver(root);
         } else {
           renderRoomSelect(root);
         }
@@ -340,7 +340,7 @@
             <li style="margin-bottom:0.5rem;"><strong>話し手の役割:</strong> 「本当」or「嘘」を設定 → トーク → 結果発表</li>
             <li style="margin-bottom:0.5rem;"><strong>参加者の役割:</strong> 話し手の主張が本当か嘘か予想して賭ける</li>
             <li style="margin-bottom:0.5rem;"><strong>賭け金:</strong> $1～$100 の間で自由に賭ける</li>
-            <li style="margin-bottom:0.5rem;"><strong>配当:</strong> 正解 = ベット額 × 0.5、不正解 = ベット失失</li>
+            <li style="margin-bottom:0.5rem;"><strong>配当:</strong> 正解時：ベット額×オッズ、不正解時：-ベット額</li>
             <li style="margin-bottom:0.5rem;"><strong>初期資金:</strong> 全プレイヤー $100 から開始</li>
             <li><strong>人数:</strong> 2～8人でプレイ可能</li>
           </ul>
@@ -503,6 +503,20 @@
         if (roomState) {
           game.players = roomState.players;
           game.playerList = Object.values(roomState.players);
+          
+          // ゲームが開始したかチェック
+          if (roomState.gameState === 'speaking') {
+            game.gameState = 'speaking';
+            game.currentSpeakerIdx = roomState.currentSpeakerIdx || 0;
+            game.speakerClaim = null;
+            game.bets = {};
+            game.revealed = false;
+            saveGameState();
+            clearInterval(updateInterval);
+            render();
+            return;
+          }
+          
           render();
         }
       }, 1000);
@@ -556,6 +570,21 @@
           game.setSpeakerClaim(false);
           render();
         });
+      } else {
+        // 参加者：定期的にゲーム状態を更新
+        const updateInterval = setInterval(async () => {
+          if (!game || game.gameState !== 'speaking') {
+            clearInterval(updateInterval);
+            return;
+          }
+          
+          const roomState = await loadRoomState(game.roomCode);
+          if (roomState && roomState.speakerClaim !== null && game.speakerClaim === null) {
+            game.speakerClaim = roomState.speakerClaim;
+            game.gameState = roomState.gameState;
+            render();
+          }
+        }, 500);
       }
     }
 
@@ -612,6 +641,20 @@
           game.gameState = 'revealing';
           render();
         });
+      } else {
+        // 参加者：定期的にゲーム状態を更新
+        const updateInterval = setInterval(async () => {
+          if (!game || game.gameState !== 'talking') {
+            clearInterval(updateInterval);
+            return;
+          }
+          
+          const roomState = await loadRoomState(game.roomCode);
+          if (roomState && roomState.gameState !== 'talking') {
+            game.gameState = roomState.gameState;
+            render();
+          }
+        }, 500);
       }
     }
 
@@ -707,6 +750,20 @@
           game.gameState = 'result';
           render();
         });
+      } else if (playerNotBet.length === 0 && !game.isHost) {
+        // 参加者：定期的にゲーム状態を更新
+        const updateInterval = setInterval(async () => {
+          if (!game || game.gameState !== 'revealing') {
+            clearInterval(updateInterval);
+            return;
+          }
+          
+          const roomState = await loadRoomState(game.roomCode);
+          if (roomState && roomState.gameState !== 'revealing') {
+            game.gameState = roomState.gameState;
+            render();
+          }
+        }, 500);
       }
     }
 
@@ -835,10 +892,6 @@
         localStorage.removeItem('doubt_gameState');
         render();
       });
-    }
-
-    function renderGame(root) {
-      renderResult(root);
     }
 
     document.addEventListener('visibilitychange', () => {
