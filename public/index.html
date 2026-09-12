@@ -514,7 +514,7 @@
       
       // 定期的にサーバーから状態を更新
       const updateInterval = setInterval(async () => {
-        if (!game || game.gameState !== 'waiting') {
+        if (!game || !game.roomCode || game.gameState !== 'waiting') {
           clearInterval(updateInterval);
           return;
         }
@@ -593,7 +593,7 @@
       } else {
         // 参加者：定期的にゲーム状態を更新
         const updateInterval = setInterval(async () => {
-          if (!game || game.gameState !== 'speaking') {
+          if (!game || !game.roomCode || game.gameState !== 'speaking') {
             clearInterval(updateInterval);
             return;
           }
@@ -678,7 +678,7 @@
       } else {
         // 参加者：定期的にゲーム状態を更新
         const updateInterval = setInterval(async () => {
-          if (!game || game.gameState !== 'talking') {
+          if (!game || !game.roomCode || game.gameState !== 'talking') {
             clearInterval(updateInterval);
             return;
           }
@@ -782,7 +782,7 @@
       } else if (isYourTurn) {
         // 話し手：定期的にゲーム状態を更新（全員がベットしたかチェック）
         const updateInterval = setInterval(async () => {
-          if (!game || game.gameState !== 'betting') {
+          if (!game || !game.roomCode || game.gameState !== 'betting') {
             clearInterval(updateInterval);
             return;
           }
@@ -805,7 +805,7 @@
       } else if (playerNotBet.length === 0 && !game.isHost) {
         // 参加者：定期的にゲーム状態を更新
         const updateInterval = setInterval(async () => {
-          if (!game || game.gameState !== 'betting') {
+          if (!game || !game.roomCode || game.gameState !== 'betting') {
             clearInterval(updateInterval);
             return;
           }
