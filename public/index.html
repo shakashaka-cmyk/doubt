@@ -498,11 +498,10 @@
       `;
       root.appendChild(div);
       
-      document.getElementById('startGameBtn').addEventListener('click', async () => {
+      document.getElementById('startGameBtn').addEventListener('click', () => {
         if (game.isHost) {
           document.getElementById('startGameBtn').disabled = true;
           game.startGame();
-          await game.syncToServer();
           render();
         }
       });
@@ -675,7 +674,7 @@
       if (isYourTurn) {
         document.getElementById('finishTalkBtn').addEventListener('click', () => {
           game.gameState = 'betting';
-          game.saveGameState();
+          saveGameState();
           game.syncToServer();
           render();
         });
