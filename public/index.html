@@ -126,7 +126,6 @@
         this.revealed = false;
         this.message = '';
         saveGameState();
-        this.syncToServer();
       }
       
       async syncToServer() {
@@ -152,7 +151,6 @@
         this.gameState = 'talking';
         this.message = '';
         saveGameState();
-        this.syncToServer();
       }
 
       setBet(amount) {
@@ -675,7 +673,6 @@
         document.getElementById('finishTalkBtn').addEventListener('click', () => {
           game.gameState = 'betting';
           saveGameState();
-          game.syncToServer();
           render();
         });
       } else {
@@ -802,8 +799,7 @@
         document.getElementById('revealBtn').addEventListener('click', () => {
           game.revealResult();
           game.gameState = 'result';
-          game.saveGameState();
-          game.syncToServer();
+          saveGameState();
           render();
         });
       } else if (playerNotBet.length === 0 && !game.isHost) {
