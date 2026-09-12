@@ -690,6 +690,9 @@
           const roomState = await loadRoomState(game.roomCode);
           if (roomState && roomState.gameState !== 'talking') {
             game.gameState = roomState.gameState;
+            game.speakerClaim = roomState.speakerClaim;
+            saveGameState();
+            clearInterval(updateInterval);
             render();
           }
         }, 500);
