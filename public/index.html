@@ -281,7 +281,6 @@
       try {
         const response = await fetch(`/api/rooms/${roomCode}/state`);
         if (!response.ok) {
-          console.warn(`⚠️ Failed to load room state: ${roomCode} (${response.status})`);
           return null;
         }
         const data = await response.json();
