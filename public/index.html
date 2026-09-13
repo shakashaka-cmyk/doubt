@@ -907,7 +907,21 @@
           });
         }
       } else if (isYourTurn) {
-        // 話し手：定期更新なし（参加者側から送信されるのを待つ）
+        // 話し手：定期的にサーバーから bets を取得して画面を更新
+        const updateInterval = setInterval(async () => {
+          if (!game || !game.roomCode || game.gameState !== 'betting') {
+            clearInterval(updateInterval);
+            return;
+          }
+          
+          const roomState = await loadRoomState(game.roomCode);
+          if (roomState) {
+            game.bets = roomState.bets || {};
+            // 画面を更新
+            render();
+          }
+        }, 3000);
+        updateIntervals.push(updateInterval);
       }
       
       if (playerNotBet.length === 0 && game.isHost) {
