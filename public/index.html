@@ -567,6 +567,22 @@
           }
         }, 1000);
         updateIntervals.push(updateInterval);
+      } else {
+        // ホスト側も定期的にサーバーから players を取得して画面を更新
+        const updateInterval = setInterval(async () => {
+          if (!game || !game.roomCode || game.gameState !== 'waiting') {
+            clearInterval(updateInterval);
+            return;
+          }
+          
+          const roomState = await loadRoomState(game.roomCode);
+          if (roomState) {
+            game.players = roomState.players;
+            game.playerList = Object.values(roomState.players);
+            render();
+          }
+        }, 1000);
+        updateIntervals.push(updateInterval);
       }
     }
 
