@@ -249,8 +249,10 @@
       try {
         const response = await fetch('/api/rooms/create', { method: 'POST' });
         const data = await response.json();
+        console.log('✅ Room created:', data.roomCode);
         return data.roomCode;
       } catch (e) {
+        console.error('❌ Failed to create room:', e);
         return null;
       }
     }
@@ -258,8 +260,15 @@
     async function verifyRoom(roomCode) {
       try {
         const response = await fetch(`/api/rooms/${roomCode}`);
-        return response.ok;
+        const exists = response.ok;
+        if (exists) {
+          console.log('✅ Room verified:', roomCode);
+        } else {
+          console.log('❌ Room not found:', roomCode);
+        }
+        return exists;
       } catch (e) {
+        console.error('❌ Failed to verify room:', e);
         return false;
       }
     }
@@ -267,9 +276,15 @@
     async function loadRoomState(roomCode) {
       try {
         const response = await fetch(`/api/rooms/${roomCode}/state`);
-        if (!response.ok) return null;
-        return await response.json();
+        if (!response.ok) {
+          console.warn(`⚠️ Failed to load room state: ${roomCode} (${response.status})`);
+          return null;
+        }
+        const data = await response.json();
+        console.log('✅ Room state loaded:', roomCode, data);
+        return data;
       } catch (e) {
+        console.error('❌ Failed to load room state:', e);
         return null;
       }
     }
@@ -501,10 +516,24 @@
       `;
       root.appendChild(div);
       
-      document.getElementById('startGameBtn').addEventListener('click', () => {
+      document.getElementById('startGameBtn').addEventListener('click', async () => {
         if (game.isHost) {
           document.getElementById('startGameBtn').disabled = true;
           game.startGame();
+          // サーバーに状態を送信
+          try {
+            await fetch(`/api/rooms/${game.roomCode}/update`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                gameState: game.gameState,
+                players: game.players,
+                currentSpeakerIdx: game.currentSpeakerIdx
+              })
+            });
+          } catch (e) {
+            console.error('Failed to sync to server:', e);
+          }
           render();
         }
       });
@@ -580,13 +609,37 @@
       });
       
       if (isYourTurn) {
-        document.getElementById('claimTrueBtn').addEventListener('click', () => {
+        document.getElementById('claimTrueBtn').addEventListener('click', async () => {
           game.setSpeakerClaim(true);
+          try {
+            await fetch(`/api/rooms/${game.roomCode}/update`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                gameState: game.gameState,
+                speakerClaim: game.speakerClaim
+              })
+            });
+          } catch (e) {
+            console.error('Failed to sync to server:', e);
+          }
           render();
         });
         
-        document.getElementById('claimFalseBtn').addEventListener('click', () => {
+        document.getElementById('claimFalseBtn').addEventListener('click', async () => {
           game.setSpeakerClaim(false);
+          try {
+            await fetch(`/api/rooms/${game.roomCode}/update`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                gameState: game.gameState,
+                speakerClaim: game.speakerClaim
+              })
+            });
+          } catch (e) {
+            console.error('Failed to sync to server:', e);
+          }
           render();
         });
       } else {
@@ -670,9 +723,20 @@
       });
       
       if (isYourTurn) {
-        document.getElementById('finishTalkBtn').addEventListener('click', () => {
+        document.getElementById('finishTalkBtn').addEventListener('click', async () => {
           game.gameState = 'betting';
           saveGameState();
+          try {
+            await fetch(`/api/rooms/${game.roomCode}/update`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                gameState: game.gameState
+              })
+            });
+          } catch (e) {
+            console.error('Failed to sync to server:', e);
+          }
           render();
         });
       } else {
