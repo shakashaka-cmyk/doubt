@@ -65,14 +65,15 @@ app.get('/api/rooms/:roomCode/state', (req, res) => {
     currentSpeakerIdx: room.currentSpeakerIdx,
     speakers: room.speakers,
     speakerClaim: room.speakerClaim || null,
-    bets: room.bets || {}
+    bets: room.bets || {},
+    playerGuesses: room.playerGuesses || {}
   });
 });
 
 // ルーム状態更新API
 app.post('/api/rooms/:roomCode/update', (req, res) => {
   const { roomCode } = req.params;
-  const { gameState, players, currentSpeakerIdx, speakerClaim, bets } = req.body;
+  const { gameState, players, currentSpeakerIdx, speakerClaim, bets, playerGuesses } = req.body;
   
   const room = gameRooms[roomCode];
   if (!room) {
@@ -87,6 +88,9 @@ app.post('/api/rooms/:roomCode/update', (req, res) => {
   }
   if (bets !== undefined) {
     room.bets = bets;
+  }
+  if (playerGuesses !== undefined) {
+    room.playerGuesses = playerGuesses;
   }
   room.lastActivity = Date.now();
   

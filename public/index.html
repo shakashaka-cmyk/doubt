@@ -139,7 +139,8 @@
               players: this.players,
               currentSpeakerIdx: this.currentSpeakerIdx,
               speakerClaim: this.speakerClaim,
-              bets: this.bets
+              bets: this.bets,
+              playerGuesses: this.playerGuesses
             })
           });
         } catch (e) {
@@ -819,7 +820,8 @@
         </div>
 
         ${isYourTurn ? `
-          <p style="text-align:center;color:#999;font-size:12px;">他のプレイヤーがベットするのをお待ちください...</p>
+          <p style="text-align:center;color:#999;font-size:12px;margin-bottom:1rem;">他のプレイヤーがベットするのをお待ちください...</p>
+          <button id="checkBetsBtn" style="width:100%;padding:12px;font-size:14px;font-weight:600;background:#28a745;color:white;border:none;border-radius:6px;cursor:pointer;">全員がベットしました ✓</button>
         ` : playerNotBet.length > 0 ? `
           <div style="margin-bottom:2rem;padding:1.5rem;background:#fff;border:1px solid #e0e0e0;border-radius:12px;">
             <h3 style="font-size:14px;font-weight:600;margin-bottom:1rem;color:#666;">話し手は「${game.speakerClaim ? '本当' : 'ウソ'}」と言っています</h3>
@@ -899,27 +901,34 @@
               return;
             }
             game.setBet(amount);
+            // playerGuesses をサーバーに送信
+            game.syncToServer();
             render();
           });
         }
       } else if (isYourTurn) {
-        // 話し手：定期的にゲーム状態を更新（全員がベットしたかチェック）
-        const updateInterval = setInterval(async () => {
-          if (!game || !game.roomCode || game.gameState !== 'betting') {
-            clearInterval(updateInterval);
-            return;
-          }
-          
-          const roomState = await loadRoomState(game.roomCode);
-          if (roomState) {
-            game.bets = roomState.bets || {};
-            render();
-          }
-        }, 1000);
+        // 話し手：定期更新なし（参加者側から送信されるのを待つ）
       }
       
       if (playerNotBet.length === 0 && game.isHost) {
-        const revealBtn = document.getElementById('revealBtn');
+        const checkBetsBtn = document.getElementById('checkBetsBtn');
+      if (checkBetsBtn) {
+        checkBetsBtn.addEventListener('click', async () => {
+          // サーバーから最新の bets と playerGuesses を取得
+          const roomState = await loadRoomState(game.roomCode);
+          if (roomState) {
+            game.bets = roomState.bets || {};
+            game.playerGuesses = roomState.playerGuesses || {};
+            // 結果を発表
+            game.revealResult();
+            game.gameState = 'result';
+            saveGameState();
+            render();
+          }
+        });
+      }
+      
+      const revealBtn = document.getElementById('revealBtn');
         if (revealBtn) {
           revealBtn.addEventListener('click', () => {
             game.revealResult();
