@@ -195,16 +195,8 @@
         
         // 配当計算
         this.playerList.forEach((p) => {
-          if (p.id === currentSpeaker.id) {
-            // 話し手の配当は話し手が正解したかで判定
-            if (isSpeakerCorrect) {
-              p.earnings += 50; // 話し手が正解で50ポイント
-              p.bankroll += 50;
-            } else {
-              p.earnings -= 30; // 話し手が不正解で-30ポイント
-              p.bankroll = Math.max(p.bankroll - 30, 0);
-            }
-          } else {
+          if (p.id !== currentSpeaker.id) {
+            // 聞き手だけが配当を受け取る
             const bet = this.bets[p.id] || 0;
             if (bet > 0) {
               // 聞き手の配当：参加者の予想が実際の結果と一致したかで判定
@@ -1080,6 +1072,8 @@
             // ホストが次に進んだので、参加者も遷移
             game.gameState = roomState.gameState;
             game.currentSpeakerIdx = roomState.currentSpeakerIdx || 0;
+            game.players = roomState.players || game.players;
+            game.playerList = Object.values(game.players);
             game.speakerClaim = null;
             game.bets = {};
             game.playerGuesses = {};
