@@ -243,6 +243,7 @@
     }
 
     let game = null;
+    let updateIntervals = []; // 全定期更新を保存
 
     async function createRoom() {
       try {
@@ -316,6 +317,10 @@
     function render() {
       const root = document.getElementById('root');
       root.innerHTML = '';
+      
+      // 前の定期更新をすべてクリア
+      updateIntervals.forEach(id => clearInterval(id));
+      updateIntervals = [];
       
       try {
         if (!game) {
@@ -512,20 +517,16 @@
         }
       });
       
-      // 定期的にサーバーから状態を更新
-      const updateInterval = setInterval(async () => {
-        if (!game || !game.roomCode || game.gameState !== 'waiting') {
-          clearInterval(updateInterval);
-          return;
-        }
-        
-        const roomState = await loadRoomState(game.roomCode);
-        if (roomState) {
-          game.players = roomState.players;
-          game.playerList = Object.values(roomState.players);
+      // ホスト側のみ定期更新をしない（ローカルで状態管理）
+      if (!game.isHost) {
+        const updateInterval = setInterval(async () => {
+          if (!game || !game.roomCode || game.gameState !== 'waiting') {
+            clearInterval(updateInterval);
+            return;
+          }
           
-          // ゲームが開始したかチェック
-          if (roomState.gameState === 'speaking') {
+          const roomState = await loadRoomState(game.roomCode);
+          if (roomState && roomState.gameState === 'speaking') {
             game.gameState = 'speaking';
             game.currentSpeakerIdx = roomState.currentSpeakerIdx || 0;
             game.speakerClaim = null;
@@ -534,12 +535,10 @@
             saveGameState();
             clearInterval(updateInterval);
             render();
-            return;
           }
-          
-          render();
-        }
-      }, 500);
+        }, 1000);
+        updateIntervals.push(updateInterval);
+      }
     }
 
     function renderSpeaking(root) {
@@ -618,6 +617,7 @@
             }
           }
         }, 500);
+        updateIntervals.push(updateInterval);
       }
     }
 
@@ -692,6 +692,7 @@
             render();
           }
         }, 500);
+        updateIntervals.push(updateInterval);
       }
     }
 
@@ -819,6 +820,7 @@
             render();
           }
         }, 500);
+        updateIntervals.push(updateInterval);
       }
     }
 
