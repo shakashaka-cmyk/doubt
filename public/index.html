@@ -93,6 +93,7 @@
         // ゲーム進行用
         this.currentSpeakerIdx = 0;
         this.speakerClaim = null; // 話し手の主張（true=本当, false=嘘）
+        this.playerGuesses = {}; // { playerId: true/false } 聞き手の予想
         this.bets = {}; // { playerId: amount }
         this.currentBetAmount = 0;
         this.revealed = false;
@@ -194,6 +195,7 @@
         // 配当計算
         this.playerList.forEach((p) => {
           if (p.id === currentSpeaker.id) {
+            // 話し手の配当は話し手が正解したかで判定
             if (isSpeakerCorrect) {
               p.earnings += 50; // 話し手が正解で50ポイント
               p.bankroll += 50;
@@ -204,8 +206,10 @@
           } else {
             const bet = this.bets[p.id] || 0;
             if (bet > 0) {
-              // 正解判定：話し手の主張と実際の結果が一致したか
-              const guessedCorrectly = (this.speakerClaim === isActuallyTruth);
+              // 聞き手の配当：参加者の予想が実際の結果と一致したかで判定
+              const playerGuess = this.playerGuesses[p.id];
+              const guessedCorrectly = (playerGuess === isActuallyTruth);
+              
               if (guessedCorrectly) {
                 const payout = Math.round(bet * odds[p.id]);
                 p.earnings += payout;
@@ -818,8 +822,16 @@
         ${isYourTurn ? `
           <p style="text-align:center;color:#999;font-size:12px;">他のプレイヤーがベットするのをお待ちください...</p>
         ` : playerNotBet.length > 0 ? `
-          <div style="margin-bottom:2rem;">
-            <p style="color:#1f5cab;margin:0 0 1rem 0;font-size:14px;">残高: $${game.players[game.playerId].bankroll}</p>
+          <div style="margin-bottom:2rem;padding:1.5rem;background:#fff;border:1px solid #e0e0e0;border-radius:12px;">
+            <h3 style="font-size:14px;font-weight:600;margin-bottom:1rem;color:#666;">話し手は「${game.speakerClaim ? '本当' : 'ウソ'}」と言っています</h3>
+            <p style="color:#1f5cab;margin:0 0 1rem 0;font-size:14px;">あなたの予想と賭け金を選んでください</p>
+            
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
+              <button id="guessTrueBtn" style="padding:12px;font-size:14px;font-weight:600;background:white;color:#155724;border:2px solid #28a745;border-radius:6px;cursor:pointer;">✓ 本当だと思う</button>
+              <button id="guessFalseBtn" style="padding:12px;font-size:14px;font-weight:600;background:white;color:#721c24;border:2px solid #dc3545;border-radius:6px;cursor:pointer;">✕ ウソだと思う</button>
+            </div>
+            
+            <p style="color:#999;margin:1rem 0 0.5rem 0;font-size:12px;">残高: $${game.players[game.playerId].bankroll}</p>
             <input type="number" id="betInput" min="1" max="${game.players[game.playerId].bankroll}" placeholder="ベット額" style="width:100%;padding:10px;margin-bottom:1rem;font-size:16px;border-radius:6px;border:1px solid #ddd;"/>
             <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;margin-bottom:1rem;">
               ${[10, 25, 50, 100].map(amt => `
@@ -848,18 +860,49 @@
       });
       
       if (!isYourTurn && playerNotBet.length > 0) {
+        const guessTrueBtn = document.getElementById('guessTrueBtn');
+        const guessFalseBtn = document.getElementById('guessFalseBtn');
+        
+        if (guessTrueBtn) {
+          guessTrueBtn.addEventListener('click', () => {
+            game.playerGuesses[game.playerId] = true;
+            guessTrueBtn.style.background = '#d4edda';
+            guessFalseBtn.style.background = 'white';
+            saveGameState();
+          });
+        }
+        
+        if (guessFalseBtn) {
+          guessFalseBtn.addEventListener('click', () => {
+            game.playerGuesses[game.playerId] = false;
+            guessFalseBtn.style.background = '#f8d7da';
+            guessTrueBtn.style.background = 'white';
+            saveGameState();
+          });
+        }
+        
         document.querySelectorAll('.quick-bet').forEach(btn => {
           btn.addEventListener('click', () => {
             document.getElementById('betInput').value = btn.dataset.amount;
           });
         });
         
-        document.getElementById('submitBetBtn').addEventListener('click', () => {
-          const amount = Number(document.getElementById('betInput').value);
-          if (game.setBet(amount)) {
+        const submitBtn = document.getElementById('submitBetBtn');
+        if (submitBtn) {
+          submitBtn.addEventListener('click', () => {
+            if (game.playerGuesses[game.playerId] === undefined) {
+              alert('本当 or ウソを選んでください');
+              return;
+            }
+            const amount = Number(document.getElementById('betInput').value);
+            if (amount < 1 || amount > game.players[game.playerId].bankroll) {
+              alert('有効な金額を入力してください');
+              return;
+            }
+            game.setBet(amount);
             render();
-          }
-        });
+          });
+        }
       } else if (isYourTurn) {
         // 話し手：定期的にゲーム状態を更新（全員がベットしたかチェック）
         const updateInterval = setInterval(async () => {
@@ -877,12 +920,15 @@
       }
       
       if (playerNotBet.length === 0 && game.isHost) {
-        document.getElementById('revealBtn').addEventListener('click', () => {
-          game.revealResult();
-          game.gameState = 'result';
-          saveGameState();
-          render();
-        });
+        const revealBtn = document.getElementById('revealBtn');
+        if (revealBtn) {
+          revealBtn.addEventListener('click', () => {
+            game.revealResult();
+            game.gameState = 'result';
+            saveGameState();
+            render();
+          });
+        }
       } else if (playerNotBet.length === 0 && !game.isHost) {
         // 参加者：定期的にゲーム状態を更新
         const updateInterval = setInterval(async () => {
