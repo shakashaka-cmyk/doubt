@@ -1034,10 +1034,28 @@
         }
       });
       
-      document.getElementById('nextBtn').addEventListener('click', () => {
+      document.getElementById('nextBtn').addEventListener('click', async () => {
         if (!game.nextSpeaker()) {
+          // ゲーム終了
           render();
         } else {
+          // サーバーに新しい状態を送信
+          try {
+            await fetch(`/api/rooms/${game.roomCode}/update`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                gameState: game.gameState,
+                currentSpeakerIdx: game.currentSpeakerIdx,
+                speakerClaim: null,
+                bets: {},
+                playerGuesses: {}
+              })
+            });
+          } catch (e) {
+            console.error('Failed to sync to server:', e);
+          }
+          saveGameState();
           render();
         }
       });
@@ -1049,6 +1067,29 @@
             render();
           }
         });
+      } else {
+        // 参加者側：次のターンへの遷移を監視
+        const updateInterval = setInterval(async () => {
+          if (!game || !game.roomCode || game.gameState !== 'result') {
+            clearInterval(updateInterval);
+            return;
+          }
+          
+          const roomState = await loadRoomState(game.roomCode);
+          if (roomState && roomState.gameState !== 'result') {
+            // ホストが次に進んだので、参加者も遷移
+            game.gameState = roomState.gameState;
+            game.currentSpeakerIdx = roomState.currentSpeakerIdx || 0;
+            game.speakerClaim = null;
+            game.bets = {};
+            game.playerGuesses = {};
+            game.revealed = false;
+            saveGameState();
+            clearInterval(updateInterval);
+            render();
+          }
+        }, 500);
+        updateIntervals.push(updateInterval);
       }
     }
 
